@@ -51,7 +51,7 @@ export const TopHud: React.FC<TopHudProps> = ({
   onPause,
 }) => {
   return (
-    <div className="fixed top-0 left-0 right-0 z-20 pointer-events-none p-2.5 sm:p-5 flex items-start justify-between gap-1.5 sm:gap-2">
+    <div className="fixed top-0 left-0 right-0 z-20 pointer-events-none px-2 sm:px-5 pb-2 kubi-safe-top flex items-start justify-between gap-1.5 sm:gap-2">
       {/* Top-Left Cluster: Compact Puzzle Selector + Unboxed Tabular Stats */}
       <div className="pointer-events-auto flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 min-w-0">
         <div
@@ -75,7 +75,7 @@ export const TopHud: React.FC<TopHudProps> = ({
                 }}
                 aria-label={`Switch to ${PUZZLE_META[p].label}`}
                 aria-pressed={active}
-                className="h-8 sm:h-9 px-2 sm:px-3 rounded-lg text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+                className="h-8 sm:h-9 px-2 max-[380px]:px-1.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
                 style={{
                   backgroundColor: active ? theme.ui.accent : 'transparent',
                   color: active ? theme.ui.accentFg : theme.ui.muted,

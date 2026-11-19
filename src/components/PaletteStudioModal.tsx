@@ -170,7 +170,7 @@ export const PaletteStudioModal: React.FC<PaletteStudioModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-40 pointer-events-none flex items-end sm:items-stretch justify-end p-2 pt-[100px] sm:pt-[78px] sm:pb-4 sm:px-5"
+      className="fixed inset-0 z-40 pointer-events-none flex items-end md:items-stretch justify-end px-2.5 md:px-5 kubi-safe-bottom md:pt-[78px] md:pb-4"
       aria-live="polite"
     >
       <aside
@@ -178,7 +178,7 @@ export const PaletteStudioModal: React.FC<PaletteStudioModalProps> = ({
         aria-modal="false"
         aria-label="Figma-Inspired Cube Sticker Palette Studio"
         data-testid="palette-studio-drawer"
-        className="pointer-events-auto w-full sm:w-[404px] max-h-[calc(100vh-112px)] sm:max-h-full rounded-2xl border flex flex-col overflow-hidden animate-kubi-enter"
+        className="pointer-events-auto w-full md:w-[376px] lg:w-[404px] max-h-[58dvh] md:max-h-full rounded-2xl border flex flex-col overflow-hidden animate-kubi-enter"
         style={{
           backgroundColor: ui.surface,
           borderColor: ui.border,

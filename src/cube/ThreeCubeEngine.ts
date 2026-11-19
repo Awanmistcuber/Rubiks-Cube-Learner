@@ -246,9 +246,11 @@ export class ThreeCubeEngine {
   private cameraTargetLook = new THREE.Vector3(-1.1, 0, 0);
   private isCameraLerping = true;
 
-  // Interaction (swipe-to-turn)
+  // Interaction (swipe-to-turn + multi-touch pinch safety)
   private raycaster = new THREE.Raycaster();
   private pointerDownPos = new THREE.Vector2();
+  private activePointers = new Set<number>();
+  private swipePointerId: number | null = null;
   private swipeActive = false;
   private swipeHitCubieId: number | null = null;
   private swipeHitNormal = new THREE.Vector3();
@@ -299,12 +301,16 @@ export class ThreeCubeEngine {
     this.camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 100);
     this.camera.position.set(5.2, 4.0, 5.8);
 
-    // OrbitControls
+    // OrbitControls (Desktop mouse + native Mobile/Tablet 1-finger orbit & 2-finger pinch zoom)
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enablePan = false;
     this.controls.enableZoom = true;
+    this.controls.touches = {
+      ONE: THREE.TOUCH.ROTATE,
+      TWO: THREE.TOUCH.DOLLY_ROTATE,
+    };
     this.controls.minDistance = 4.4;
-    this.controls.maxDistance = 14.5;
+    this.controls.maxDistance = 16.5;
     this.controls.enableDamping = !this.isSoftwareGl;
     this.controls.dampingFactor = 0.07;
     this.controls.rotateSpeed = 0.78;
@@ -765,28 +771,42 @@ export class ThreeCubeEngine {
   }
 
   public updateCameraFraming(state: GameState, immediate = false) {
-    const aspect = this.camera.aspect || 1.5;
-    const isPortrait = aspect < 0.92;
+    const width = Math.max(this.container.clientWidth, 1);
+    const height = Math.max(this.container.clientHeight, 1);
+    const aspect = this.camera.aspect || width / height;
+    const isPortrait = aspect < 0.96;
+    const isCompactMobilePortrait = aspect < 0.68;
+    const isShortLandscape = !isPortrait && height < 520;
     const explodeZoom = 1 + this.explodeTarget * 0.34;
 
     if (state === 'title') {
       if (isPortrait) {
-        const portraitScale = Math.max(1.35, 1.05 / Math.max(aspect, 0.44));
+        // Place hero cube cleanly in upper half above the bottom-anchored mobile/tablet title card
+        const portraitScale = Math.max(isCompactMobilePortrait ? 1.44 : 1.24, 1.04 / Math.max(aspect, 0.44));
         this.cameraTargetPos.set(4.8 * portraitScale, 3.6 * portraitScale, 5.8 * portraitScale);
-        this.cameraTargetLook.set(0, -1.25, 0);
+        this.cameraTargetLook.set(0, isCompactMobilePortrait ? -1.32 : -1.05, 0);
+      } else if (isShortLandscape) {
+        this.cameraTargetPos.set(6.5, 4.4, 7.2);
+        this.cameraTargetLook.set(-1.55, -0.05, 0);
       } else {
-        // Place hero cube cleanly in right 55% with full margins above/below
+        // Place hero cube cleanly in right 55% with full margins above/below (Desktop unchanged)
         this.cameraTargetPos.set(6.0, 4.3, 6.8);
         this.cameraTargetLook.set(-1.45, -0.08, 0);
       }
     } else {
       if (isPortrait) {
-        // Vertical FOV is fixed; scale distance inversely by aspect so cube never clips horizontally on 390px mobile
-        const portraitScale = Math.max(1.48, 0.96 / Math.max(aspect, 0.42)) * explodeZoom;
+        // Vertical FOV is fixed; scale distance inversely by aspect so cube clears mobile & tablet HUDs cleanly
+        const portraitScale =
+          Math.max(isCompactMobilePortrait ? 1.56 : 1.38, 0.98 / Math.max(aspect, 0.42)) * explodeZoom;
         this.cameraTargetPos.set(4.5 * portraitScale, 3.3 * portraitScale, 5.2 * portraitScale);
-        this.cameraTargetLook.set(0, -0.62, 0);
+        this.cameraTargetLook.set(0, isCompactMobilePortrait ? -0.78 : -0.66, 0);
+      } else if (isShortLandscape) {
+        // Landscape phone clearance between Top HUD and Bottom Dock
+        const distBoost = 1.52 * explodeZoom;
+        this.cameraTargetPos.set(4.6 * distBoost, 3.45 * distBoost, 5.4 * distBoost);
+        this.cameraTargetLook.set(0, -0.82, 0);
       } else {
-        // Generous desktop clearance between Top HUD and collapsible Bottom Dock
+        // Generous desktop & tablet-landscape clearance between Top HUD and collapsible Bottom Dock
         const distBoost = 1.32 * explodeZoom;
         this.cameraTargetPos.set(4.6 * distBoost, 3.45 * distBoost, 5.4 * distBoost);
         this.cameraTargetLook.set(0, -0.68, 0);
@@ -1089,6 +1109,19 @@ export class ThreeCubeEngine {
       if (this.gameState !== 'playing') return;
       if (e.button !== 0 && e.pointerType === 'mouse') return;
 
+      this.activePointers.add(e.pointerId);
+
+      // If a second finger touches down (pinch-to-zoom / 2-finger orbit), cancel face swipe and yield to OrbitControls
+      if (this.activePointers.size > 1) {
+        if (this.swipeActive) {
+          this.swipeActive = false;
+          this.swipePointerId = null;
+          this.swipeHitCubieId = null;
+          this.controls.enabled = this.gameState === 'playing';
+        }
+        return;
+      }
+
       const ndc = new THREE.Vector2();
       getNDC(e.clientX, e.clientY, ndc);
       this.raycaster.setFromCamera(ndc, this.camera);
@@ -1100,6 +1133,7 @@ export class ThreeCubeEngine {
         const cubieId = hit.object.userData.cubieId as number | undefined;
         if (cubieId !== undefined) {
           this.swipeActive = true;
+          this.swipePointerId = e.pointerId;
           this.swipeHitCubieId = cubieId;
           this.pointerDownPos.set(e.clientX, e.clientY);
           this.swipeHitPoint.copy(hit.point);
@@ -1118,19 +1152,23 @@ export class ThreeCubeEngine {
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      // Subtle cursor parallax on title screen
-      const rect = dom.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        this.pointerParallaxX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
-        this.pointerParallaxY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+      // Subtle cursor parallax on title screen (pointer mouse/pen only to avoid erratic touch jumps)
+      if (e.pointerType !== 'touch') {
+        const rect = dom.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          this.pointerParallaxX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+          this.pointerParallaxY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+        }
       }
 
-      if (!this.swipeActive || this.swipeHitCubieId === null) return;
+      if (!this.swipeActive || this.swipeHitCubieId === null || this.swipePointerId !== e.pointerId) return;
+      if (this.activePointers.size > 1) return;
       if (this.activeTurn) return;
 
       const dx = e.clientX - this.pointerDownPos.x;
       const dy = e.clientY - this.pointerDownPos.y;
-      if (Math.hypot(dx, dy) < 22) return;
+      const swipeThreshold = e.pointerType === 'touch' ? 16 : 22;
+      if (Math.hypot(dx, dy) < swipeThreshold) return;
 
       // Map screen drag vector onto camera right/up plane, then into cubeHolder local space
       const camRight = _v1.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
@@ -1154,13 +1192,16 @@ export class ThreeCubeEngine {
       }
 
       this.swipeActive = false;
+      this.swipePointerId = null;
       this.swipeHitCubieId = null;
       this.controls.enabled = this.gameState === 'playing';
     };
 
-    const onPointerUp = () => {
-      if (this.swipeActive) {
+    const onPointerUp = (e: PointerEvent) => {
+      this.activePointers.delete(e.pointerId);
+      if (this.swipeActive && (this.swipePointerId === e.pointerId || this.activePointers.size === 0)) {
         this.swipeActive = false;
+        this.swipePointerId = null;
         this.swipeHitCubieId = null;
         this.controls.enabled = this.gameState === 'playing';
       }

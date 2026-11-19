@@ -20,14 +20,50 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  height: 100dvh;
   margin: 0;
   padding: 0;
   overflow: hidden;
+  overscroll-behavior: none;
   font-family: var(--font-sans);
   background-color: var(--kubi-bg);
   color: var(--kubi-text);
-  touch-action: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Isolate touch-action: none strictly to the 3D WebGL stage so modals/drawers scroll natively on iOS & Android */
+.kubi-canvas-stage,
+.kubi-canvas-stage canvas {
+  touch-action: none;
+}
+
+.kubi-scroll {
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.kubi-scroll-x {
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.kubi-safe-top {
+  padding-top: max(0.625rem, env(safe-area-inset-top));
+}
+
+.kubi-safe-bottom {
+  padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+}
+
+@media (min-width: 640px) {
+  .kubi-safe-top {
+    padding-top: max(1.25rem, env(safe-area-inset-top));
+  }
+  .kubi-safe-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
 }
 
 .font-display {

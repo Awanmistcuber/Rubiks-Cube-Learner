@@ -153,7 +153,7 @@ export const DailyChallengeEntryCard: React.FC<DailyChallengeEntryCardProps> = (
         </div>
 
         {/* Right: Direct Entry Actions */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
             data-testid="open-global-leaderboard-btn"
@@ -491,7 +491,7 @@ export const DailyChallengePanel: React.FC<DailyChallengePanelProps> = ({
           </div>
 
           {/* Cuber Handle Input */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
             <label htmlFor="daily-handle-input" className="text-xs font-medium whitespace-nowrap" style={{ color: theme.ui.muted }}>
               <User className="w-3.5 h-3.5 inline mr-1 align-[-2px]" />
               Handle
@@ -510,7 +510,7 @@ export const DailyChallengePanel: React.FC<DailyChallengePanelProps> = ({
                 }
               }}
               placeholder="Your cuber handle"
-              className="h-9 px-3 rounded-lg border text-xs font-medium outline-none w-40 sm:w-44"
+              className="h-9 px-3 rounded-lg border text-xs font-medium outline-none flex-1 md:flex-initial md:w-44 min-w-0"
               style={{
                 backgroundColor: theme.ui.surface,
                 borderColor: theme.ui.border,

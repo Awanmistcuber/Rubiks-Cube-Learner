@@ -812,12 +812,12 @@ export default function App() {
   }, [handleManualMove, handleStartStudio, handleToggleMute, handleUndo]);
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden" style={{ backgroundColor: theme.ui.bg }}>
+    <main className="relative w-full h-dvh overflow-hidden" style={{ backgroundColor: theme.ui.bg }}>
       {/* Isolated Full-Bleed WebGL Canvas Container (never re-rendered by HUD updates) */}
       <div
         ref={canvasMountRef}
         data-testid="cube-viewport"
-        className="fixed inset-0 w-full h-full z-0"
+        className="kubi-canvas-stage fixed inset-0 w-full h-full z-0"
       />
 
       {/* Title Screen Overlay */}

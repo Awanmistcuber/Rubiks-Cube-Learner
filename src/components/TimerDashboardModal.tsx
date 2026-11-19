@@ -502,7 +502,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
       style={{ backgroundColor: 'rgba(10, 12, 16, 0.56)' }}
     >
       <div
-        className="w-full max-w-[1120px] max-h-[94vh] rounded-2xl border flex flex-col overflow-hidden animate-kubi-enter"
+        className="w-full max-w-[1120px] max-h-[94dvh] rounded-2xl border flex flex-col overflow-hidden animate-kubi-enter"
         style={{
           backgroundColor: theme.ui.surface,
           borderColor: theme.ui.border,
@@ -511,14 +511,14 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
       >
         {/* Top Studio Workspace Header */}
         <div
-          className="px-3.5 sm:px-5 py-3 border-b flex flex-wrap items-center justify-between gap-2.5 shrink-0"
+          className="px-3 sm:px-5 py-2.5 sm:py-3 border-b flex flex-wrap items-center justify-between gap-2 sm:gap-2.5 shrink-0"
           style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surfaceSubtle }}
         >
           {/* Left: View Switcher */}
           <div
             role="tablist"
             aria-label="Timing workspace views"
-            className="flex items-center gap-1 p-1 rounded-xl border"
+            className="order-1 flex items-center gap-0.5 sm:gap-1 p-1 rounded-xl border min-w-0"
             style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surface }}
           >
             <button
@@ -526,21 +526,22 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
               role="tab"
               aria-selected={viewTab === 'stopwatch'}
               onClick={() => setViewTab('stopwatch')}
-              className="h-9 px-2.5 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               style={{
                 backgroundColor: viewTab === 'stopwatch' ? theme.ui.accent : 'transparent',
                 color: viewTab === 'stopwatch' ? theme.ui.accentFg : theme.ui.muted,
               }}
             >
               <Timer className="w-4 h-4 shrink-0" />
-              <span>Stopwatch</span>
+              <span className="max-[370px]:hidden">Stopwatch</span>
+              <span className="hidden max-[370px]:inline">Timer</span>
             </button>
             <button
               type="button"
               role="tab"
               aria-selected={viewTab === 'dashboard'}
               onClick={() => setViewTab('dashboard')}
-              className="h-9 px-2.5 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               style={{
                 backgroundColor: viewTab === 'dashboard' ? theme.ui.accent : 'transparent',
                 color: viewTab === 'dashboard' ? theme.ui.accentFg : theme.ui.muted,
@@ -556,7 +557,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
               data-testid="tab-daily-challenge"
               aria-selected={viewTab === 'daily'}
               onClick={() => setViewTab('daily')}
-              className="h-9 px-2.5 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               style={{
                 backgroundColor: viewTab === 'daily' ? theme.ui.accent : 'transparent',
                 color: viewTab === 'daily' ? theme.ui.accentFg : theme.ui.muted,
@@ -568,8 +569,11 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
             </button>
           </div>
 
-          {/* Center: Configuration Selector */}
-          <div className="flex items-center gap-1 p-1 rounded-xl border" style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surface }}>
+          {/* Center: Configuration Selector (full-width row on phone, inline center on tablet/desktop) */}
+          <div
+            className="order-3 lg:order-2 w-full lg:w-auto flex items-center justify-between lg:justify-start gap-1 p-1 rounded-xl border"
+            style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surface }}
+          >
             {PUZZLES.map((p) => {
               const active = p === puzzleType;
               return (
@@ -578,7 +582,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
                   type="button"
                   onClick={() => onSelectPuzzle(p)}
                   aria-pressed={active}
-                  className="h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap"
+                  className="flex-1 lg:flex-initial h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap"
                   style={{
                     backgroundColor: active ? theme.ui.accentSoft : 'transparent',
                     color: active ? theme.ui.accent : theme.ui.muted,
@@ -590,12 +594,12 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
             })}
           </div>
 
-          {/* Right: Close back to 3D Studio */}
+          {/* Right: Close back to 3D Studio (always anchored top-right on mobile, tablet & desktop) */}
           <button
             type="button"
             onClick={onClose}
             aria-label="Close stopwatch and return to 3D cube"
-            className="h-9 px-3 rounded-xl border text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            className="order-2 lg:order-3 h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
             style={{
               backgroundColor: theme.ui.surface,
               borderColor: theme.ui.border,
@@ -821,8 +825,12 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
                   { label: 'Current Ao12', value: formatPreciseTime(stats.currentAo12Ms) },
                   { label: 'Session Mean', value: formatPreciseTime(stats.sessionMeanMs) },
                   { label: 'Solves', value: `${stats.validCount}/${stats.totalCount}` },
-                ].map((metric) => (
-                  <div key={metric.label} className="p-3.5 text-center" style={{ borderColor: theme.ui.border }}>
+                ].map((metric, idx) => (
+                  <div
+                    key={metric.label}
+                    className={`p-3 sm:p-3.5 text-center ${idx === 4 ? 'col-span-2 sm:col-span-1' : ''}`}
+                    style={{ borderColor: theme.ui.border }}
+                  >
                     <div className="text-[11px] font-medium" style={{ color: theme.ui.muted }}>
                       {metric.label}
                     </div>
@@ -1054,7 +1062,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
                           <th className="py-2.5 px-3.5">#</th>
                           <th className="py-2.5 px-3">Time</th>
                           <th className="py-2.5 px-3 hidden sm:table-cell">Mode</th>
-                          <th className="py-2.5 px-3">Scramble</th>
+                          <th className="py-2.5 px-3 hidden sm:table-cell">Scramble</th>
                           <th className="py-2.5 px-3.5 text-right">Actions</th>
                         </tr>
                       </thead>
@@ -1088,7 +1096,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
                                 {rec.source === 'virtual3d' ? '3D Cube' : 'Stopwatch'}
                               </td>
                               <td
-                                className="py-2.5 px-3 font-mono-tabular text-[11px] max-w-[260px] truncate"
+                                className="py-2.5 px-3 hidden sm:table-cell font-mono-tabular text-[11px] max-w-[260px] truncate"
                                 style={{ color: theme.ui.muted }}
                                 title={rec.scramble}
                               >

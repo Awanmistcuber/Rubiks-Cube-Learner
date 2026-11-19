@@ -57,7 +57,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
       style={{ backgroundColor: 'rgba(10, 12, 16, 0.48)' }}
     >
       <div
-        className="w-full max-w-sm max-h-[92vh] overflow-y-auto kubi-scroll rounded-2xl border p-6 animate-kubi-enter"
+        className="w-full max-w-sm max-h-[92dvh] overflow-y-auto kubi-scroll rounded-2xl border p-5 sm:p-6 animate-kubi-enter"
         style={{
           backgroundColor: theme.ui.surface,
           borderColor: theme.ui.border,
@@ -247,7 +247,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
       style={{ backgroundColor: 'rgba(10, 12, 16, 0.45)' }}
     >
       <div
-        className="w-full max-w-md rounded-2xl border p-6 sm:p-7 animate-kubi-enter"
+        className="w-full max-w-md max-h-[92dvh] overflow-y-auto kubi-scroll rounded-2xl border p-5 sm:p-7 animate-kubi-enter"
         style={{
           backgroundColor: theme.ui.surface,
           borderColor: theme.ui.border,

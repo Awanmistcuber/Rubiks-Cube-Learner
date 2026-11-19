@@ -163,7 +163,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   };
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none flex flex-col items-center px-3 pb-3 sm:pb-4">
+    <div className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none flex flex-col items-center px-2.5 sm:px-4 kubi-safe-bottom">
       {/* Collapse / Expand Handle */}
       <button
         type="button"
@@ -256,19 +256,19 @@ export const BottomDock: React.FC<BottomDockProps> = ({
             )}
           </div>
 
-          {/* Tab Panel Content */}
-          <div className="p-2.5 sm:p-4">
+          {/* Tab Panel Content — bounded height ensures landscape phones & small mobiles never clip TopHud */}
+          <div className="p-2.5 sm:p-4 max-h-[54dvh] sm:max-h-[48dvh] overflow-y-auto kubi-scroll">
             {/* 1. PLAY & SOLVE TAB */}
             {activeTab === 'play' && (
               <div className="flex flex-col gap-2.5">
-                {/* Action Row — Single clean horizontal strip on both desktop and mobile */}
-                <div className="flex items-center justify-between gap-1.5 sm:gap-2">
-                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                {/* Action Row — Single clean horizontal strip on desktop, tablet, and compact 360px phones */}
+                <div className="flex items-center justify-between gap-1 sm:gap-2">
+                  <div className="flex items-center gap-1 sm:gap-2 min-w-0">
                     <button
                       type="button"
                       disabled={isBusy}
                       onClick={onScramble}
-                      className="h-9 sm:h-10 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-transform duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                      className="h-9 sm:h-10 px-2.5 sm:px-4 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1 sm:gap-1.5 transition-transform duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer whitespace-nowrap"
                       style={{
                         backgroundColor: theme.ui.accent,
                         color: theme.ui.accentFg,
@@ -282,7 +282,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       type="button"
                       disabled={isBusy || isSolved}
                       onClick={onHint}
-                      className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                      className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center gap-1 sm:gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
                       style={{
                         backgroundColor: theme.ui.surfaceSubtle,
                         borderColor: theme.ui.border,
@@ -298,7 +298,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       type="button"
                       disabled={isBusy || isSolved}
                       onClick={onAutoSolve}
-                      className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                      className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center gap-1 sm:gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
                       style={{
                         backgroundColor: theme.ui.surfaceSubtle,
                         borderColor: theme.ui.border,
@@ -317,7 +317,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       disabled={isBusy || !canUndo}
                       onClick={onUndo}
                       aria-label="Undo last move"
-                      className="h-9 sm:h-10 w-9 sm:w-auto sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                      className="h-9 sm:h-10 w-8 sm:w-auto sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
                       style={{
                         backgroundColor: theme.ui.surfaceSubtle,
                         borderColor: theme.ui.border,
@@ -333,7 +333,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       disabled={isBusy}
                       onClick={onResetCube}
                       aria-label="Reset cube to solved state"
-                      className="h-9 sm:h-10 w-9 sm:w-auto sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                      className="h-9 sm:h-10 w-8 sm:w-auto sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
                       style={{
                         backgroundColor: theme.ui.surfaceSubtle,
                         borderColor: theme.ui.border,
@@ -348,7 +348,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
 
                 {/* Touch-Friendly WCA Face Turn Pad — fits all 6 faces + direction cleanly on 390px */}
                 <div className="flex items-center justify-between gap-1.5 sm:gap-2 pt-2 border-t" style={{ borderColor: theme.ui.border }}>
-                  <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto kubi-scroll py-0.5 flex-1">
+                  <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto kubi-scroll-x py-0.5 flex-1">
                     {FACE_KEYS.map((face) => {
                       const notation = counterClockwise ? `${face}'` : face;
                       return (
@@ -418,7 +418,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
             {activeTab === 'learn' && activeLesson && (
               <div className="flex flex-col gap-3">
                 {/* Lesson Stage Selector */}
-                <div className="flex items-center gap-1.5 overflow-x-auto kubi-scroll pb-0.5">
+                <div className="flex items-center gap-1.5 overflow-x-auto kubi-scroll-x pb-0.5">
                   {lessons.map((lesson) => {
                     const selected = lesson.id === activeLesson.id;
                     return (
@@ -706,7 +706,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                 </div>
 
                 {/* Compact Patterns & Algorithms Strip */}
-                <div className="flex items-center gap-1.5 pt-2 border-t overflow-x-auto kubi-scroll" style={{ borderColor: theme.ui.border }}>
+                <div className="flex items-center gap-1.5 pt-2 border-t overflow-x-auto kubi-scroll-x" style={{ borderColor: theme.ui.border }}>
                   <span className="text-[11px] font-medium shrink-0 mr-1" style={{ color: theme.ui.muted }}>
                     Patterns
                   </span>
@@ -775,7 +775,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
 
                 {/* Quick Prompt Triggers */}
                 {!coachAnswer && !coachError && !coachLoading && (
-                  <div className="flex items-center gap-1.5 overflow-x-auto kubi-scroll pb-0.5">
+                  <div className="flex items-center gap-1.5 overflow-x-auto kubi-scroll-x pb-0.5">
                     {COACH_PROMPTS.map((q) => (
                       <button
                         key={q}

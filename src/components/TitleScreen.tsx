@@ -24,7 +24,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   const activeMeta = PUZZLE_META[puzzleType];
 
   return (
-    <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-5 sm:p-8 lg:p-12">
+    <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between px-4 sm:px-8 lg:px-12 kubi-safe-top kubi-safe-bottom">
       {/* Top minimal theme swatches — right aligned, zero navbar chrome */}
       <div className="flex items-center justify-end pointer-events-none">
         <div
@@ -64,10 +64,10 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         </div>
       </div>
 
-      {/* Main focal lockup anchored over left calm negative space (desktop) or bottom-left (mobile) */}
-      <div className="my-auto max-w-md pt-40 sm:pt-48 md:pt-0 pointer-events-none">
+      {/* Main focal lockup anchored over bottom space on portrait mobile/tablet, left calm space on landscape tablet/desktop */}
+      <div className="mt-auto mb-3 lg:my-auto max-w-md w-full mx-auto lg:mx-0 pointer-events-none">
         <div
-          className="pointer-events-auto rounded-2xl p-6 sm:p-7 border animate-kubi-enter"
+          className="pointer-events-auto rounded-2xl p-5 sm:p-7 border animate-kubi-enter max-h-[calc(100dvh-108px)] overflow-y-auto kubi-scroll"
           style={{
             backgroundColor: theme.ui.surface,
             borderColor: theme.ui.border,
@@ -197,12 +197,15 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       </div>
 
       {/* Single flat, borderless inline control hint line in bottom safe margin */}
-      <div className="flex items-center justify-center sm:justify-start pointer-events-none">
+      <div className="flex items-center justify-center lg:justify-start pointer-events-none text-center lg:text-left">
         <p
-          className="text-xs tracking-wide font-medium"
+          className="text-[11px] sm:text-xs tracking-wide font-medium"
           style={{ color: theme.ui.muted }}
         >
-          Drag Cube to Turn · Drag Space to Orbit · U D L R F B Keys · Enter to Start
+          <span className="lg:hidden">Swipe Cube to Turn · Drag Space to Orbit · Pinch to Zoom</span>
+          <span className="hidden lg:inline">
+            Drag Cube to Turn · Drag Space to Orbit · U D L R F B Keys · Enter to Start
+          </span>
         </p>
       </div>
     </div>
