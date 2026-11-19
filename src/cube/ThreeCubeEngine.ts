@@ -12,7 +12,16 @@ import {
   parseNotation,
 } from './cubeLogic';
 import { THEMES } from './themes';
-import type { Axis, CubeMove, CubieState, FaceKey, GameState, PuzzleType, ThemeId } from './types';
+import type {
+  Axis,
+  CubeMove,
+  CubieState,
+  FaceKey,
+  GameState,
+  PuzzleType,
+  ThemeId,
+  ThemePalette,
+} from './types';
 
 export interface EngineCallbacks {
   onMoveApplied: (move: CubeMove, isSolved: boolean, isFromQueue: boolean) => void;
@@ -210,7 +219,7 @@ export class ThreeCubeEngine {
 
   // State
   private puzzleType: PuzzleType = '3x3';
-  private themeId: ThemeId = 'atelier';
+  private activePalette: ThemePalette = THEMES.atelier;
   private gameState: GameState = 'title';
   private cubieStates: CubieState[] = [];
   private cubieVisuals: Map<number, CubieVisual> = new Map();
@@ -251,10 +260,14 @@ export class ThreeCubeEngine {
   private lastTime = performance.now();
   private resizeObserver: ResizeObserver;
 
-  constructor(container: HTMLElement, callbacks: EngineCallbacks, initialTheme: ThemeId = 'atelier') {
+  constructor(
+    container: HTMLElement,
+    callbacks: EngineCallbacks,
+    initialTheme: ThemePalette | ThemeId = 'atelier'
+  ) {
     this.container = container;
     this.callbacks = callbacks;
-    this.themeId = initialTheme;
+    this.activePalette = typeof initialTheme === 'string' ? THEMES[initialTheme] : initialTheme;
     this.isSoftwareGl = detectSoftwareGl();
 
     // Renderer
@@ -333,7 +346,7 @@ export class ThreeCubeEngine {
     this.shadowTex = createContactShadowTexture();
 
     // Shared PBR Materials
-    const theme = THEMES[this.themeId].scene;
+    const theme = this.activePalette.scene;
     this.chassisMat = new THREE.MeshStandardMaterial({
       color: theme.chassisColor,
       roughness: theme.chassisRoughness,
@@ -467,7 +480,7 @@ export class ThreeCubeEngine {
     }
 
     // Apply Theme & Build Initial 3x3 Cube
-    this.applyTheme(this.themeId);
+    this.applyTheme(this.activePalette);
     this.loadPuzzle('3x3', false);
     this.handleResize();
     this.updateCameraFraming('title', true);
@@ -702,11 +715,12 @@ export class ThreeCubeEngine {
   }
 
   /**
-   * Switches between the 4 curated Figma Community themes in real time.
+   * Switches between built-in Figma themes and custom user sticker palettes in real time.
    */
-  public applyTheme(themeId: ThemeId) {
-    this.themeId = themeId;
-    const t = THEMES[themeId].scene;
+  public applyTheme(themeOrId: ThemePalette | ThemeId) {
+    const palette = typeof themeOrId === 'string' ? THEMES[themeOrId] : themeOrId;
+    this.activePalette = palette;
+    const t = palette.scene;
 
     this.scene.background = new THREE.Color(t.background);
     this.scene.fog = new THREE.FogExp2(t.fogColor, t.fogDensity);

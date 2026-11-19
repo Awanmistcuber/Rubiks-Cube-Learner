@@ -2,13 +2,13 @@ import React from 'react';
 import { ArrowRight } from 'lucide-react';
 import { PUZZLE_META } from '../cube/curriculum';
 import { THEME_LIST } from '../cube/themes';
-import type { PuzzleType, ThemeId, ThemePalette } from '../cube/types';
+import type { PuzzleType, ThemePalette } from '../cube/types';
 
 interface TitleScreenProps {
   theme: ThemePalette;
   puzzleType: PuzzleType;
   onSelectPuzzle: (p: PuzzleType) => void;
-  onSelectTheme: (t: ThemeId) => void;
+  onSelectTheme: (t: string) => void;
   onStart: () => void;
 }
 

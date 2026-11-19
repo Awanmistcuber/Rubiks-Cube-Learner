@@ -6,6 +6,8 @@ export type FaceKey = 'px' | 'nx' | 'py' | 'ny' | 'pz' | 'nz';
 
 export type ThemeId = 'atelier' | 'monolith' | 'pastel' | 'graphite';
 
+export type AmbientSoundscapeId = 'off' | 'rainy' | 'lofi' | 'whitenoise';
+
 export type GameState = 'title' | 'playing' | 'paused' | 'gameover';
 
 export type DockTab = 'play' | 'learn' | 'lab' | 'coach';
@@ -80,10 +82,11 @@ export interface SolveSnapshot {
 }
 
 export interface ThemePalette {
-  id: ThemeId;
+  id: string;
   name: string;
   tag: string;
   isDark: boolean;
+  isCustom?: boolean;
   ui: {
     bg: string;
     surface: string;

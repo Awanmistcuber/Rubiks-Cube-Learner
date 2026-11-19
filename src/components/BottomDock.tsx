@@ -3,10 +3,14 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
+  CloudRain,
   Compass,
   Gamepad2,
+  Headphones,
   Layers,
   Loader2,
+  Music,
+  Palette,
   Play,
   RotateCcw,
   Send,
@@ -15,21 +19,28 @@ import {
   Sparkles,
   StepForward,
   Undo2,
+  VolumeX,
   Wand2,
+  Waves,
 } from 'lucide-react';
+import { AMBIENT_SOUNDSCAPES } from '../cube/audio';
 import { ALGORITHM_PRESETS, CURRICULUM } from '../cube/curriculum';
+import { buildThemePaletteFromCustom, type CustomThemeRecord } from '../cube/customThemes';
 import { THEME_LIST } from '../cube/themes';
 import type {
+  AmbientSoundscapeId,
   CubeMove,
   DockTab,
   LessonStep,
   PuzzleType,
-  ThemeId,
   ThemePalette,
 } from '../cube/types';
 
 interface BottomDockProps {
   theme: ThemePalette;
+  customThemes: CustomThemeRecord[];
+  soundscape: AmbientSoundscapeId;
+  ambientVolume: number;
   puzzleType: PuzzleType;
   activeTab: DockTab;
   collapsed: boolean;
@@ -52,7 +63,10 @@ interface BottomDockProps {
   onManualMove: (notation: string) => void;
   onExplodeChange: (v: number) => void;
   onSpeedChange: (v: number) => void;
-  onSelectTheme: (t: ThemeId) => void;
+  onSelectTheme: (themeKey: string) => void;
+  onOpenPaletteStudio: () => void;
+  onSelectSoundscape: (s: AmbientSoundscapeId) => void;
+  onAmbientVolumeChange: (v: number) => void;
   onRunAlgorithm: (notations: string[]) => void;
   onSelectLesson: (lesson: LessonStep) => void;
   onStageLesson: (lesson: LessonStep) => void;
@@ -71,6 +85,9 @@ const COACH_PROMPTS = [
 
 export const BottomDock: React.FC<BottomDockProps> = ({
   theme,
+  customThemes,
+  soundscape,
+  ambientVolume,
   puzzleType,
   activeTab,
   collapsed,
@@ -94,6 +111,9 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onExplodeChange,
   onSpeedChange,
   onSelectTheme,
+  onOpenPaletteStudio,
+  onSelectSoundscape,
+  onAmbientVolumeChange,
   onRunAlgorithm,
   onSelectLesson,
   onStageLesson,
@@ -564,14 +584,30 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   </label>
                 </div>
 
-                {/* Figma Community Themes + Quick Algorithm Triggers */}
+                {/* Figma Community & Custom Themes + Ambient Soundscapes */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t" style={{ borderColor: theme.ui.border }}>
+                  {/* Studio & Custom Figma Themes */}
                   <div>
-                    <div className="text-xs font-medium mb-2" style={{ color: theme.ui.muted }}>
-                      Studio Themes
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-xs font-medium" style={{ color: theme.ui.muted }}>
+                        Studio & Custom Themes
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="open-palette-studio-btn"
+                        onClick={onOpenPaletteStudio}
+                        className="h-7 px-2.5 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                        style={{
+                          backgroundColor: theme.ui.accentSoft,
+                          color: theme.ui.accent,
+                        }}
+                      >
+                        <Palette className="w-3 h-3 shrink-0" />
+                        <span>Customize Stickers</span>
+                      </button>
                     </div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {THEME_LIST.map((t) => {
+                    <div className="grid grid-cols-2 gap-1.5 max-h-[126px] overflow-y-auto kubi-scroll pr-0.5">
+                      {[...THEME_LIST, ...customThemes.map(buildThemePaletteFromCustom)].map((t) => {
                         const active = t.id === theme.id;
                         return (
                           <button
@@ -579,7 +615,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                             type="button"
                             onClick={() => onSelectTheme(t.id)}
                             aria-pressed={active}
-                            className="h-10 px-2.5 rounded-lg border flex items-center gap-2 text-left transition-colors cursor-pointer"
+                            className="h-9 px-2.5 rounded-lg border flex items-center gap-2 text-left transition-colors cursor-pointer"
                             style={{
                               backgroundColor: active ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
                               borderColor: active ? theme.ui.accent : theme.ui.border,
@@ -609,30 +645,88 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                     </div>
                   </div>
 
+                  {/* Ambient Focus Soundscapes */}
                   <div>
-                    <div className="text-xs font-medium mb-2" style={{ color: theme.ui.muted }}>
-                      Patterns & Algorithms
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-xs font-medium inline-flex items-center gap-1.5" style={{ color: theme.ui.muted }}>
+                        <Headphones className="w-3.5 h-3.5" style={{ color: soundscape !== 'off' ? theme.ui.accent : theme.ui.muted }} />
+                        Ambient Soundscapes
+                      </span>
+                      {soundscape !== 'off' && (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="range"
+                            min={0.05}
+                            max={1}
+                            step={0.05}
+                            value={ambientVolume}
+                            onChange={(e) => onAmbientVolumeChange(parseFloat(e.target.value))}
+                            aria-label="Ambient soundscape volume"
+                            className="kubi-slider w-16"
+                          />
+                          <span className="font-mono-tabular text-[10px]" style={{ color: theme.ui.muted }}>
+                            {Math.round(ambientVolume * 100)}%
+                          </span>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {presets.slice(0, 4).map((preset) => (
-                        <button
-                          key={preset.id}
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => onRunAlgorithm(preset.notation)}
-                          title={preset.description}
-                          className="h-10 px-3 rounded-lg border text-xs font-medium transition-colors disabled:opacity-45 cursor-pointer whitespace-nowrap"
-                          style={{
-                            backgroundColor: theme.ui.surfaceSubtle,
-                            borderColor: theme.ui.border,
-                            color: theme.ui.text,
-                          }}
-                        >
-                          {preset.name}
-                        </button>
-                      ))}
+                    <div className="grid grid-cols-2 gap-1.5" data-testid="dock-soundscapes-menu">
+                      {AMBIENT_SOUNDSCAPES.map((scape) => {
+                        const active = scape.id === soundscape;
+                        const Icon =
+                          scape.id === 'rainy'
+                            ? CloudRain
+                            : scape.id === 'lofi'
+                              ? Music
+                              : scape.id === 'whitenoise'
+                                ? Waves
+                                : VolumeX;
+                        return (
+                          <button
+                            key={scape.id}
+                            type="button"
+                            data-testid={`soundscape-${scape.id}`}
+                            aria-pressed={active}
+                            onClick={() => onSelectSoundscape(scape.id)}
+                            title={scape.description}
+                            className="h-9 px-2.5 rounded-lg border flex items-center gap-1.5 text-left transition-colors cursor-pointer"
+                            style={{
+                              backgroundColor: active ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
+                              borderColor: active ? theme.ui.accent : theme.ui.border,
+                              color: active ? theme.ui.accent : theme.ui.text,
+                            }}
+                          >
+                            <Icon className="w-3.5 h-3.5 shrink-0" />
+                            <span className="text-xs font-semibold truncate">{scape.shortLabel}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
+                </div>
+
+                {/* Compact Patterns & Algorithms Strip */}
+                <div className="flex items-center gap-1.5 pt-2 border-t overflow-x-auto kubi-scroll" style={{ borderColor: theme.ui.border }}>
+                  <span className="text-[11px] font-medium shrink-0 mr-1" style={{ color: theme.ui.muted }}>
+                    Patterns
+                  </span>
+                  {presets.slice(0, 4).map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => onRunAlgorithm(preset.notation)}
+                      title={preset.description}
+                      className="h-8 px-2.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-45 cursor-pointer whitespace-nowrap shrink-0"
+                      style={{
+                        backgroundColor: theme.ui.surfaceSubtle,
+                        borderColor: theme.ui.border,
+                        color: theme.ui.text,
+                      }}
+                    >
+                      {preset.name}
+                    </button>
+                  ))}
                 </div>
               </div>
             )}

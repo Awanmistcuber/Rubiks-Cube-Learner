@@ -51,11 +51,11 @@ export const TopHud: React.FC<TopHudProps> = ({
   onPause,
 }) => {
   return (
-    <div className="fixed top-0 left-0 right-0 z-20 pointer-events-none p-3 sm:p-5 flex items-start justify-between gap-2">
+    <div className="fixed top-0 left-0 right-0 z-20 pointer-events-none p-2.5 sm:p-5 flex items-start justify-between gap-1.5 sm:gap-2">
       {/* Top-Left Cluster: Compact Puzzle Selector + Unboxed Tabular Stats */}
-      <div className="pointer-events-auto flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+      <div className="pointer-events-auto flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 min-w-0">
         <div
-          className="flex items-center gap-1 p-1 rounded-xl border"
+          className="flex items-center gap-0.5 sm:gap-1 p-1 rounded-xl border"
           style={{
             backgroundColor: theme.ui.surface,
             borderColor: theme.ui.border,
@@ -75,7 +75,7 @@ export const TopHud: React.FC<TopHudProps> = ({
                 }}
                 aria-label={`Switch to ${PUZZLE_META[p].label}`}
                 aria-pressed={active}
-                className="h-9 px-2.5 sm:px-3 rounded-lg text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+                className="h-8 sm:h-9 px-2 sm:px-3 rounded-lg text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
                 style={{
                   backgroundColor: active ? theme.ui.accent : 'transparent',
                   color: active ? theme.ui.accentFg : theme.ui.muted,
@@ -161,7 +161,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label="Open Speedcube Stopwatch"
             title="Stopwatch & Scrambles (T)"
-            className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            className="h-8 sm:h-10 px-2 sm:px-3 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
             style={{
               backgroundColor: theme.ui.accentSoft,
               color: theme.ui.accent,
@@ -180,7 +180,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label="Open Timing Dashboard and Graphs"
             title="Timing Dashboard & Graphs"
-            className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            className="h-8 sm:h-10 px-2 sm:px-3 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
             style={{ color: theme.ui.text }}
           >
             <BarChart3 className="w-4 h-4 shrink-0" />
@@ -220,7 +220,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label={isMuted ? 'Unmute audio' : 'Mute audio'}
             title={isMuted ? 'Unmute audio (M)' : 'Mute audio (M)'}
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center transition-colors duration-150 cursor-pointer"
+            className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center transition-colors duration-150 cursor-pointer"
             style={{ color: isMuted ? theme.ui.muted : theme.ui.text }}
           >
             {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -250,7 +250,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label="Pause studio"
             title="Pause (Esc or P)"
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center transition-colors duration-150 cursor-pointer"
+            className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center transition-colors duration-150 cursor-pointer"
             style={{ color: theme.ui.text }}
           >
             <Pause className="w-4 h-4" />

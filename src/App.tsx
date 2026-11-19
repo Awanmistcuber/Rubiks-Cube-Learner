@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BottomDock } from './components/BottomDock';
 import { PauseModal, VictoryModal } from './components/Modals';
+import { PaletteStudioModal } from './components/PaletteStudioModal';
 import { TimerDashboardModal, type TimerDashboardTab } from './components/TimerDashboardModal';
 import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
-import { cubeAudio } from './cube/audio';
+import { cubeAudio, loadAmbientPrefs, saveAmbientPrefs } from './cube/audio';
 import {
   computeSolutionFromHistory,
   generateScramble,
@@ -15,6 +16,12 @@ import {
 } from './cube/cubeLogic';
 import { CURRICULUM } from './cube/curriculum';
 import {
+  loadCustomThemes,
+  resolveThemePalette,
+  saveCustomThemes,
+  type CustomThemeRecord,
+} from './cube/customThemes';
+import {
   getOrCreateClientId,
   loadPlayerName,
   loadStudioPref,
@@ -24,7 +31,6 @@ import {
   writeCookie,
   type DailyChallengeResponse,
 } from './cube/dailyChallenge';
-import { THEMES } from './cube/themes';
 import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
 import {
   createSeedRecords,
@@ -34,13 +40,14 @@ import {
   type SolveRecord,
 } from './cube/timerStats';
 import type {
+  AmbientSoundscapeId,
   CubeMove,
   DockTab,
   GameState,
   LessonStep,
   PuzzleType,
   SolveSnapshot,
-  ThemeId,
+  ThemePalette,
 } from './cube/types';
 
 function readBestTime(puzzle: PuzzleType): number | null {
@@ -68,7 +75,6 @@ function writeBestTime(puzzle: PuzzleType, ms: number) {
 }
 
 const VALID_PUZZLES_SET = new Set<PuzzleType>(['2x2', '3x3', '4x4', 'mirror']);
-const VALID_THEMES_SET = new Set<ThemeId>(['atelier', 'monolith', 'pastel', 'graphite']);
 
 export default function App() {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
@@ -86,10 +92,16 @@ export default function App() {
     const saved = loadStudioPref('puzzle') as PuzzleType | null;
     return saved && VALID_PUZZLES_SET.has(saved) ? saved : '3x3';
   });
-  const [themeId, setThemeId] = useState<ThemeId>(() => {
-    const saved = loadStudioPref('theme') as ThemeId | null;
-    return saved && VALID_THEMES_SET.has(saved) ? saved : 'atelier';
-  });
+  const [customThemes, setCustomThemes] = useState<CustomThemeRecord[]>(() => loadCustomThemes());
+  const [themeKey, setThemeKey] = useState<string>(() => loadStudioPref('theme') || 'atelier');
+  const [previewPalette, setPreviewPalette] = useState<ThemePalette | null>(null);
+  const [paletteStudioOpen, setPaletteStudioOpen] = useState(false);
+
+  // Ambient Focus Soundscapes (persisted to localStorage + cookies)
+  const [initialAmbient] = useState(() => loadAmbientPrefs());
+  const [soundscape, setSoundscape] = useState<AmbientSoundscapeId>(initialAmbient.soundscape);
+  const [ambientVolume, setAmbientVolume] = useState<number>(initialAmbient.volume);
+
   const [activeTab, setActiveTab] = useState<DockTab>('play');
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -120,6 +132,7 @@ export default function App() {
   const currentScrambleRef = useRef<string>('');
   const activeDailyRef = useRef<{ dateKey: string; puzzleType: PuzzleType; scramble: string } | null>(null);
   const timerModalOpenRef = useRef<boolean>(false);
+  const paletteStudioOpenRef = useRef<boolean>(false);
   const puzzleRef = useRef<PuzzleType>(puzzleType);
   const gameStateRef = useRef<GameState>(gameState);
   const hasScrambledRef = useRef(false);
@@ -135,14 +148,19 @@ export default function App() {
   gameStateRef.current = gameState;
   activeTabRef.current = activeTab;
   timerModalOpenRef.current = timerModalTab !== null;
+  paletteStudioOpenRef.current = paletteStudioOpen;
 
   useEffect(() => {
     saveSolveRecords(solveRecords);
   }, [solveRecords]);
 
-  const theme = THEMES[themeId];
+  const savedTheme = useMemo(
+    () => resolveThemePalette(themeKey, customThemes),
+    [themeKey, customThemes]
+  );
+  const theme = previewPalette ?? savedTheme;
 
-  // Sync CSS theme variables and document.body.dataset.state
+  // Sync CSS theme variables and live 3D WebGL scene theme (supports live custom sticker previews)
   useEffect(() => {
     document.body.dataset.state = gameState;
   }, [gameState]);
@@ -157,8 +175,26 @@ export default function App() {
     root.style.setProperty('--kubi-muted', theme.ui.muted);
     root.style.setProperty('--kubi-accent', theme.ui.accent);
     root.style.setProperty('--kubi-accent-fg', theme.ui.accentFg);
-    engineRef.current?.applyTheme(themeId);
-  }, [theme, themeId]);
+    engineRef.current?.applyTheme(theme);
+  }, [theme]);
+
+  // Arm restored ambient soundscape smoothly after first user interaction (browser autoplay-safe)
+  useEffect(() => {
+    cubeAudio.setAmbientVolume(ambientVolume);
+    if (soundscape === 'off') return;
+    if (cubeAudio.getSoundscape() === soundscape) return;
+
+    const unlock = () => {
+      cubeAudio.setAmbientVolume(ambientVolume);
+      cubeAudio.setSoundscape(soundscape);
+    };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, [ambientVolume, soundscape]);
 
   // Smooth solve timer tick (10Hz throttled React update while actively solving)
   useEffect(() => {
@@ -325,7 +361,7 @@ export default function App() {
           setIsBusy(false);
         },
       },
-      themeId
+      savedTheme
     );
 
     engineRef.current = engine;
@@ -406,11 +442,64 @@ export default function App() {
     [resetProgressTrackers]
   );
 
-  const handleSelectTheme = useCallback((nextTheme: ThemeId) => {
-    cubeAudio.playUiTick();
-    setThemeId(nextTheme);
-    saveStudioPref('theme', nextTheme);
+  const handleSelectTheme = useCallback(
+    (nextThemeKey: string) => {
+      cubeAudio.playUiTick();
+      setThemeKey(nextThemeKey);
+      saveStudioPref('theme', nextThemeKey);
+      saveCustomThemes(customThemes, nextThemeKey);
+    },
+    [customThemes]
+  );
+
+  const handleSaveCustomTheme = useCallback((record: CustomThemeRecord) => {
+    setCustomThemes((prev) => {
+      const idx = prev.findIndex((t) => t.id === record.id);
+      const next =
+        idx >= 0 ? prev.map((t) => (t.id === record.id ? record : t)) : [record, ...prev];
+      saveCustomThemes(next, record.id);
+      return next;
+    });
+    setThemeKey(record.id);
+    saveStudioPref('theme', record.id);
   }, []);
+
+  const handleDeleteCustomTheme = useCallback(
+    (id: string) => {
+      cubeAudio.playUiTick();
+      setCustomThemes((prev) => {
+        const next = prev.filter((t) => t.id !== id);
+        const fallbackKey = themeKey === id ? 'atelier' : themeKey;
+        saveCustomThemes(next, fallbackKey);
+        return next;
+      });
+      if (themeKey === id) {
+        setThemeKey('atelier');
+        saveStudioPref('theme', 'atelier');
+      }
+    },
+    [themeKey]
+  );
+
+  const handleSelectSoundscape = useCallback(
+    (next: AmbientSoundscapeId) => {
+      cubeAudio.playUiTick();
+      setSoundscape(next);
+      cubeAudio.setAmbientVolume(ambientVolume);
+      cubeAudio.setSoundscape(next);
+      saveAmbientPrefs(next, ambientVolume);
+    },
+    [ambientVolume]
+  );
+
+  const handleAmbientVolumeChange = useCallback(
+    (vol: number) => {
+      setAmbientVolume(vol);
+      cubeAudio.setAmbientVolume(vol);
+      saveAmbientPrefs(soundscape, vol);
+    },
+    [soundscape]
+  );
 
   const handleScramble = useCallback(() => {
     const engine = engineRef.current;
@@ -671,7 +760,7 @@ export default function App() {
   // Global Keyboard Shortcuts (WCA moves, Enter/Space title start, Esc/P pause, M mute, H HUD, Z undo, T stopwatch)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (timerModalOpenRef.current) return;
+      if (timerModalOpenRef.current || paletteStudioOpenRef.current) return;
 
       const target = e.target as HTMLElement | null;
       const isTyping =
@@ -770,57 +859,78 @@ export default function App() {
             onPause={() => setGameState('paused')}
           />
 
-          <BottomDock
-            theme={theme}
-            puzzleType={puzzleType}
-            activeTab={activeTab}
-            collapsed={dockCollapsed}
-            isBusy={isBusy}
-            isSolved={isSolved}
-            canUndo={historyRef.current.length > 0}
-            hintMove={hintMove}
-            explodeAmount={explodeAmount}
-            turnSpeed={turnSpeed}
-            activeLessonId={activeLessonId}
-            lessonStepIndex={lessonStepIndex}
-            recentNotations={recentNotations}
-            onSetTab={(tab) => {
-              cubeAudio.playUiTick();
-              setActiveTab(tab);
-              if (tab === 'learn') {
-                const lessons = CURRICULUM[puzzleType];
-                const current = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
-                if (isSolved && !hasScrambled) {
-                  handleStageLesson(current);
+          {!paletteStudioOpen && (
+            <BottomDock
+              theme={theme}
+              customThemes={customThemes}
+              soundscape={soundscape}
+              ambientVolume={ambientVolume}
+              puzzleType={puzzleType}
+              activeTab={activeTab}
+              collapsed={dockCollapsed}
+              isBusy={isBusy}
+              isSolved={isSolved}
+              canUndo={historyRef.current.length > 0}
+              hintMove={hintMove}
+              explodeAmount={explodeAmount}
+              turnSpeed={turnSpeed}
+              activeLessonId={activeLessonId}
+              lessonStepIndex={lessonStepIndex}
+              recentNotations={recentNotations}
+              onSetTab={(tab) => {
+                cubeAudio.playUiTick();
+                setActiveTab(tab);
+                if (tab === 'learn') {
+                  const lessons = CURRICULUM[puzzleType];
+                  const current = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
+                  if (isSolved && !hasScrambled) {
+                    handleStageLesson(current);
+                  }
                 }
-              }
-            }}
-            onToggleCollapse={() => setDockCollapsed((p) => !p)}
-            onScramble={handleScramble}
-            onUndo={handleUndo}
-            onHint={handleHint}
-            onAutoSolve={handleAutoSolve}
-            onResetCube={handleResetCube}
-            onManualMove={handleManualMove}
-            onExplodeChange={handleExplodeChange}
-            onSpeedChange={handleSpeedChange}
-            onSelectTheme={handleSelectTheme}
-            onRunAlgorithm={handleRunAlgorithm}
-            onSelectLesson={handleSelectLesson}
-            onStageLesson={handleStageLesson}
-            onStepLesson={handleStepLesson}
-            onPlayLesson={handlePlayLesson}
-          />
+              }}
+              onToggleCollapse={() => setDockCollapsed((p) => !p)}
+              onScramble={handleScramble}
+              onUndo={handleUndo}
+              onHint={handleHint}
+              onAutoSolve={handleAutoSolve}
+              onResetCube={handleResetCube}
+              onManualMove={handleManualMove}
+              onExplodeChange={handleExplodeChange}
+              onSpeedChange={handleSpeedChange}
+              onSelectTheme={handleSelectTheme}
+              onOpenPaletteStudio={() => {
+                cubeAudio.playUiTick();
+                setPaletteStudioOpen(true);
+              }}
+              onSelectSoundscape={handleSelectSoundscape}
+              onAmbientVolumeChange={handleAmbientVolumeChange}
+              onRunAlgorithm={handleRunAlgorithm}
+              onSelectLesson={handleSelectLesson}
+              onStageLesson={handleStageLesson}
+              onStepLesson={handleStepLesson}
+              onPlayLesson={handlePlayLesson}
+            />
+          )}
         </>
       )}
 
-      {/* Pause Modal */}
+      {/* Pause / Studio Settings Modal */}
       {gameState === 'paused' && (
         <PauseModal
           theme={theme}
+          customThemes={customThemes}
+          soundscape={soundscape}
+          ambientVolume={ambientVolume}
           onResume={() => setGameState('playing')}
           onRestart={handleResetCube}
           onSelectTheme={handleSelectTheme}
+          onOpenPaletteStudio={() => {
+            cubeAudio.playUiTick();
+            setGameState('playing');
+            setPaletteStudioOpen(true);
+          }}
+          onSelectSoundscape={handleSelectSoundscape}
+          onAmbientVolumeChange={handleAmbientVolumeChange}
           onBackToTitle={() => {
             engineRef.current?.clearGuideArrow();
             setGameState('title');
@@ -852,6 +962,24 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Figma-Inspired Live Cube Sticker Palette Studio Drawer */}
+      {paletteStudioOpen && (
+        <PaletteStudioModal
+          theme={savedTheme}
+          activeThemeKey={themeKey}
+          customThemes={customThemes}
+          onPreviewPalette={setPreviewPalette}
+          onSaveCustomTheme={handleSaveCustomTheme}
+          onSelectTheme={handleSelectTheme}
+          onDeleteCustomTheme={handleDeleteCustomTheme}
+          onClose={() => {
+            setPreviewPalette(null);
+            setPaletteStudioOpen(false);
+          }}
+        />
+      )}
+
       {/* Built-in Speedcube Stopwatch, Analytics Dashboard & Daily Challenge Workspace */}
       {timerModalTab !== null && (
         <TimerDashboardModal
