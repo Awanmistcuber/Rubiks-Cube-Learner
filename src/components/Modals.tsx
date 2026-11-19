@@ -1,5 +1,5 @@
 import React from 'react';
-import { Award, BookOpen, Home, Play, RotateCcw, Shuffle } from 'lucide-react';
+import { Award, BookOpen, Home, Play, RotateCcw, Shuffle, Trophy } from 'lucide-react';
 import { PUZZLE_META } from '../cube/curriculum';
 import { THEME_LIST } from '../cube/themes';
 import type { SolveSnapshot, ThemeId, ThemePalette } from '../cube/types';
@@ -130,6 +130,7 @@ interface VictoryModalProps {
   snapshot: SolveSnapshot;
   onPlayAgain: () => void;
   onOpenLessons: () => void;
+  onOpenDailyLeaderboard?: () => void;
   onDismiss: () => void;
 }
 
@@ -138,6 +139,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   snapshot,
   onPlayAgain,
   onOpenLessons,
+  onOpenDailyLeaderboard,
   onDismiss,
 }) => {
   return (
@@ -214,20 +216,56 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            data-start="true"
-            onClick={onPlayAgain}
-            className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 cursor-pointer"
+        {snapshot.dailyChallenge && (
+          <div
+            className="mb-4 px-3.5 py-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs"
             style={{
-              backgroundColor: theme.ui.accent,
-              color: theme.ui.accentFg,
+              backgroundColor: theme.ui.accentSoft,
+              borderColor: theme.ui.accent,
+              color: theme.ui.text,
             }}
           >
-            <Shuffle className="w-4 h-4" />
-            <span>New Scramble</span>
-          </button>
+            <span className="inline-flex items-center gap-1.5 font-semibold">
+              <Trophy className="w-4 h-4 shrink-0" style={{ color: theme.ui.accent }} />
+              Daily {snapshot.dailyChallenge.dateKey} Submitted
+            </span>
+            <span className="font-mono-tabular font-bold" style={{ color: theme.ui.accent }}>
+              {snapshot.dailyChallenge.rank
+                ? `Global #${snapshot.dailyChallenge.rank} of ${snapshot.dailyChallenge.totalParticipants}`
+                : 'Recorded'}
+            </span>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2">
+          {snapshot.dailyChallenge && onOpenDailyLeaderboard ? (
+            <button
+              type="button"
+              onClick={onOpenDailyLeaderboard}
+              className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 cursor-pointer"
+              style={{
+                backgroundColor: theme.ui.accent,
+                color: theme.ui.accentFg,
+              }}
+            >
+              <Trophy className="w-4 h-4" />
+              <span>View Global Leaderboard</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-start="true"
+              onClick={onPlayAgain}
+              className="w-full h-11 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 cursor-pointer"
+              style={{
+                backgroundColor: theme.ui.accent,
+                color: theme.ui.accentFg,
+              }}
+            >
+              <Shuffle className="w-4 h-4" />
+              <span>New Scramble</span>
+            </button>
+          )}
 
           <div className="grid grid-cols-2 gap-2">
             <button

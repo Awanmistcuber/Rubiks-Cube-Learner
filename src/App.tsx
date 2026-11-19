@@ -14,6 +14,16 @@ import {
   simplifyMoves,
 } from './cube/cubeLogic';
 import { CURRICULUM } from './cube/curriculum';
+import {
+  getOrCreateClientId,
+  loadPlayerName,
+  loadStudioPref,
+  readCookie,
+  saveStudioPref,
+  upsertLocalDailyEntry,
+  writeCookie,
+  type DailyChallengeResponse,
+} from './cube/dailyChallenge';
 import { THEMES } from './cube/themes';
 import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
 import {
@@ -35,28 +45,36 @@ import type {
 
 function readBestTime(puzzle: PuzzleType): number | null {
   try {
-    const raw = localStorage.getItem(`kubi_best_${puzzle}`);
+    const raw = localStorage.getItem(`kubi_best_${puzzle}`) ?? readCookie(`kubi_best_${puzzle}`);
     if (!raw) return null;
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   } catch {
-    return null;
+    const raw = readCookie(`kubi_best_${puzzle}`);
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }
 }
 
 function writeBestTime(puzzle: PuzzleType, ms: number) {
+  const val = String(Math.round(ms));
   try {
-    localStorage.setItem(`kubi_best_${puzzle}`, String(Math.round(ms)));
+    localStorage.setItem(`kubi_best_${puzzle}`, val);
   } catch {
     // ignore storage restrictions
   }
+  writeCookie(`kubi_best_${puzzle}`, val);
 }
+
+const VALID_PUZZLES_SET = new Set<PuzzleType>(['2x2', '3x3', '4x4', 'mirror']);
+const VALID_THEMES_SET = new Set<ThemeId>(['atelier', 'monolith', 'pastel', 'graphite']);
 
 export default function App() {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<ThreeCubeEngine | null>(null);
 
-  // Core UI state
+  // Core UI state (restored from localStorage + cookies)
   const [gameState, setGameState] = useState<GameState>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -64,8 +82,14 @@ export default function App() {
     }
     return 'title';
   });
-  const [puzzleType, setPuzzleType] = useState<PuzzleType>('3x3');
-  const [themeId, setThemeId] = useState<ThemeId>('atelier');
+  const [puzzleType, setPuzzleType] = useState<PuzzleType>(() => {
+    const saved = loadStudioPref('puzzle') as PuzzleType | null;
+    return saved && VALID_PUZZLES_SET.has(saved) ? saved : '3x3';
+  });
+  const [themeId, setThemeId] = useState<ThemeId>(() => {
+    const saved = loadStudioPref('theme') as ThemeId | null;
+    return saved && VALID_THEMES_SET.has(saved) ? saved : 'atelier';
+  });
   const [activeTab, setActiveTab] = useState<DockTab>('play');
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -85,6 +109,7 @@ export default function App() {
   // Built-in Stopwatch & Timing Analytics Dashboard state
   const [timerModalTab, setTimerModalTab] = useState<TimerDashboardTab | null>(null);
   const [solveRecords, setSolveRecords] = useState<SolveRecord[]>(() => loadSolveRecords());
+  const [activeDailyDateKey, setActiveDailyDateKey] = useState<string | null>(null);
 
   // Curriculum Lesson state
   const [activeLessonId, setActiveLessonId] = useState<string>(CURRICULUM['3x3'][0].id);
@@ -93,6 +118,7 @@ export default function App() {
   // Mutable refs for 60Hz engine callbacks (never tear down WebGL!)
   const historyRef = useRef<CubeMove[]>([]);
   const currentScrambleRef = useRef<string>('');
+  const activeDailyRef = useRef<{ dateKey: string; puzzleType: PuzzleType; scramble: string } | null>(null);
   const timerModalOpenRef = useRef<boolean>(false);
   const puzzleRef = useRef<PuzzleType>(puzzleType);
   const gameStateRef = useRef<GameState>(gameState);
@@ -208,6 +234,10 @@ export default function App() {
               setSolveRecords((prev) => [...prev, virtualRec]);
             }
 
+            const dailyRun = activeDailyRef.current;
+            const isValidDailyRun =
+              qualifiesForRecord && dailyRun !== null && dailyRun.puzzleType === puzzleRef.current;
+
             const snapshot: SolveSnapshot = {
               puzzleType: puzzleRef.current,
               moves: moveCountRef.current,
@@ -216,6 +246,8 @@ export default function App() {
               isNewRecord,
             };
 
+            activeDailyRef.current = null;
+            setActiveDailyDateKey(null);
             hasScrambledRef.current = false;
             setHasScrambled(false);
             isAutoSolvingRef.current = false;
@@ -224,6 +256,58 @@ export default function App() {
             engine.triggerVictoryCelebration();
             setVictorySnapshot(snapshot);
             setGameState('gameover');
+
+            if (isValidDailyRun && dailyRun) {
+              const clientId = getOrCreateClientId();
+              const playerName = loadPlayerName();
+              const localDailyEntry = {
+                id: `dc-3d-${Date.now().toString(36)}`,
+                dateKey: dailyRun.dateKey,
+                puzzleType: dailyRun.puzzleType,
+                clientId,
+                playerName,
+                timeMs: Math.round(finalElapsed),
+                penalty: 'none' as const,
+                source: 'virtual3d' as const,
+                moves: snapshot.moves,
+                submittedAt: Date.now(),
+              };
+              upsertLocalDailyEntry(localDailyEntry);
+
+              fetch('/api/daily-challenge/submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  puzzleType: dailyRun.puzzleType,
+                  clientId,
+                  playerName,
+                  timeMs: Math.round(finalElapsed),
+                  penalty: 'none',
+                  source: 'virtual3d',
+                  moves: snapshot.moves,
+                }),
+              })
+                .then((res) => (res.ok ? res.json() : null))
+                .then((json: (DailyChallengeResponse & { entry?: typeof localDailyEntry }) | null) => {
+                  if (!json) return;
+                  if (json.entry) upsertLocalDailyEntry(json.entry);
+                  setVictorySnapshot((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          dailyChallenge: {
+                            dateKey: json.dateKey,
+                            rank: json.userEntry?.rank ?? null,
+                            totalParticipants: json.totalParticipants,
+                          },
+                        }
+                      : prev
+                  );
+                })
+                .catch(() => {
+                  // localStorage & cookie already hold the entry
+                });
+            }
           }
         },
         onQueueEmpty: (solvedNow) => {
@@ -241,10 +325,13 @@ export default function App() {
           setIsBusy(false);
         },
       },
-      'atelier'
+      themeId
     );
 
     engineRef.current = engine;
+    if (puzzleRef.current !== '3x3') {
+      engine.loadPuzzle(puzzleRef.current, false);
+    }
     engine.setGameState(gameStateRef.current);
 
     return () => {
@@ -289,6 +376,8 @@ export default function App() {
     isAutoSolvingRef.current = false;
     setIsBusy(false);
     setLessonStepIndex(0);
+    activeDailyRef.current = null;
+    setActiveDailyDateKey(null);
   }, []);
 
   const handleStartStudio = useCallback(() => {
@@ -309,6 +398,7 @@ export default function App() {
       if (nextPuzzle === puzzleRef.current && gameStateRef.current !== 'title') return;
       setPuzzleType(nextPuzzle);
       puzzleRef.current = nextPuzzle;
+      saveStudioPref('puzzle', nextPuzzle);
       setActiveLessonId(CURRICULUM[nextPuzzle][0].id);
       resetProgressTrackers();
       engineRef.current?.loadPuzzle(nextPuzzle, true);
@@ -319,6 +409,7 @@ export default function App() {
   const handleSelectTheme = useCallback((nextTheme: ThemeId) => {
     cubeAudio.playUiTick();
     setThemeId(nextTheme);
+    saveStudioPref('theme', nextTheme);
   }, []);
 
   const handleScramble = useCallback(() => {
@@ -356,6 +447,34 @@ export default function App() {
       engine.loadPuzzle(targetPuzzle, false);
       resetProgressTrackers();
       currentScrambleRef.current = scrambleStr;
+
+      const moves = parseAlgorithm(scrambleStr, targetPuzzle);
+      if (moves.length > 0) {
+        isScramblingRef.current = true;
+        setIsBusy(true);
+        engine.enqueueMoves(moves, 2.6);
+      }
+    },
+    [resetProgressTrackers]
+  );
+
+  const handlePlayDailyIn3D = useCallback(
+    (targetPuzzle: PuzzleType, scrambleStr: string, dateKey: string) => {
+      const engine = engineRef.current;
+      if (!engine) return;
+      cubeAudio.playUiTick();
+      setTimerModalTab(null);
+      setVictorySnapshot(null);
+      setGameState('playing');
+      setPuzzleType(targetPuzzle);
+      puzzleRef.current = targetPuzzle;
+      setActiveLessonId(CURRICULUM[targetPuzzle][0].id);
+
+      engine.loadPuzzle(targetPuzzle, false);
+      resetProgressTrackers();
+      currentScrambleRef.current = scrambleStr;
+      activeDailyRef.current = { dateKey, puzzleType: targetPuzzle, scramble: scrambleStr };
+      setActiveDailyDateKey(dateKey);
 
       const moves = parseAlgorithm(scrambleStr, targetPuzzle);
       if (moves.length > 0) {
@@ -633,6 +752,7 @@ export default function App() {
             elapsedMs={elapsedMs}
             isSolved={isSolved}
             hasScrambled={hasScrambled}
+            activeDailyDateKey={activeDailyDateKey}
             isMuted={isMuted}
             dockCollapsed={dockCollapsed}
             onSelectPuzzle={handleSelectPuzzle}
@@ -721,13 +841,18 @@ export default function App() {
             setActiveTab('learn');
             handleStageLesson(CURRICULUM[puzzleType][0]);
           }}
+          onOpenDailyLeaderboard={() => {
+            setVictorySnapshot(null);
+            setGameState('playing');
+            setTimerModalTab('daily');
+          }}
           onDismiss={() => {
             setVictorySnapshot(null);
             setGameState('playing');
           }}
         />
       )}
-      {/* Built-in Speedcube Stopwatch & Analytics Dashboard Workspace */}
+      {/* Built-in Speedcube Stopwatch, Analytics Dashboard & Daily Challenge Workspace */}
       {timerModalTab !== null && (
         <TimerDashboardModal
           theme={theme}
@@ -742,6 +867,7 @@ export default function App() {
           onClearPuzzleRecords={handleClearPuzzleRecords}
           onRestoreDemoRecords={handleRestoreDemoRecords}
           onApplyScrambleTo3D={handleApplyScrambleTo3D}
+          onPlayDailyIn3D={handlePlayDailyIn3D}
         />
       )}
     </main>

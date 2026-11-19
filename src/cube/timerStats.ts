@@ -45,7 +45,7 @@ export interface SessionStats {
   histogram: HistogramBin[];
 }
 
-export function getEffectiveTimeMs(record: SolveRecord): number | null {
+export function getEffectiveTimeMs(record: Pick<SolveRecord, 'timeMs' | 'penalty'>): number | null {
   if (record.penalty === 'dnf') return null;
   return record.penalty === '+2' ? record.timeMs + 2000 : record.timeMs;
 }
@@ -68,7 +68,7 @@ export function formatPreciseTime(ms: number | null, fallback = '—'): string {
   return `${secs}.${String(centis).padStart(2, '0')}`;
 }
 
-export function formatRecordTime(record: SolveRecord): string {
+export function formatRecordTime(record: Pick<SolveRecord, 'timeMs' | 'penalty'>): string {
   if (record.penalty === 'dnf') return 'DNF';
   const eff = getEffectiveTimeMs(record);
   const base = formatPreciseTime(eff);

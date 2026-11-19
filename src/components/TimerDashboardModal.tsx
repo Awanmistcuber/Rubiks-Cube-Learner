@@ -9,10 +9,25 @@ import {
   Search,
   Timer,
   Trash2,
+  Trophy,
   X,
 } from 'lucide-react';
 import { cubeAudio } from '../cube/audio';
 import { PUZZLE_META } from '../cube/curriculum';
+import {
+  generateDailyScramble,
+  getNextUtcMidnightMs,
+  getOrCreateClientId,
+  getUtcDateKey,
+  loadLocalDailyEntries,
+  loadPlayerName,
+  mergeDailyEntries,
+  patchLocalDailyEntry,
+  savePlayerName,
+  upsertLocalDailyEntry,
+  type DailyChallengeResponse,
+  type DailyLeaderboardEntry,
+} from '../cube/dailyChallenge';
 import {
   computeSessionStats,
   exportRecordsToCsv,
@@ -28,8 +43,9 @@ import {
   PuzzleComparisonChart,
   SolveProgressionChart,
 } from './AnalyticsCharts';
+import { DailyChallengeEntryCard, DailyChallengePanel } from './DailyChallengePanel';
 
-export type TimerDashboardTab = 'stopwatch' | 'dashboard';
+export type TimerDashboardTab = 'stopwatch' | 'dashboard' | 'daily';
 
 interface TimerDashboardModalProps {
   theme: ThemePalette;
@@ -44,6 +60,7 @@ interface TimerDashboardModalProps {
   onClearPuzzleRecords: (puzzle: PuzzleType) => void;
   onRestoreDemoRecords: () => void;
   onApplyScrambleTo3D: (puzzle: PuzzleType, scramble: string) => void;
+  onPlayDailyIn3D: (puzzle: PuzzleType, scramble: string, dateKey: string) => void;
 }
 
 const PUZZLES: PuzzleType[] = ['2x2', '3x3', '4x4', 'mirror'];
@@ -63,6 +80,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
   onClearPuzzleRecords,
   onRestoreDemoRecords,
   onApplyScrambleTo3D,
+  onPlayDailyIn3D,
 }) => {
   const [viewTab, setViewTab] = useState<TimerDashboardTab>(initialTab);
   const [scramble, setScramble] = useState<string>(() => generateWcaScrambleString(puzzleType));
@@ -70,6 +88,13 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
   const [useInspection, setUseInspection] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'stopwatch' | 'virtual3d'>('all');
+
+  // Shared Daily Challenge & Global Leaderboard state
+  const [clientId] = useState<string>(() => getOrCreateClientId());
+  const [playerName, setPlayerName] = useState<string>(() => loadPlayerName());
+  const [dailyData, setDailyData] = useState<DailyChallengeResponse | null>(null);
+  const [dailyLoading, setDailyLoading] = useState<boolean>(false);
+  const [dailyError, setDailyError] = useState<string | null>(null);
 
   // Stopwatch state
   const [phase, setPhase] = useState<StopwatchPhase>('idle');
@@ -94,6 +119,171 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
     setScramble(generateWcaScrambleString(puzzleType));
     setLastLoggedId(null);
   }, [puzzleType]);
+
+  // Fetch Daily Challenge & Global Leaderboard whenever puzzle changes (merged with localStorage/cookie cache)
+  const fetchDailyChallenge = useCallback(async () => {
+    setDailyLoading(true);
+    setDailyError(null);
+    const localEntries = loadLocalDailyEntries();
+    try {
+      const res = await fetch(
+        `/api/daily-challenge?puzzle=${encodeURIComponent(puzzleType)}&clientId=${encodeURIComponent(clientId)}`
+      );
+      if (!res.ok) throw new Error('Unable to load Daily Challenge leaderboard.');
+      const json = (await res.json()) as DailyChallengeResponse;
+      const merged = mergeDailyEntries(json.leaderboard, localEntries, json.dateKey, puzzleType);
+      setDailyData({
+        ...json,
+        leaderboard: merged,
+        totalParticipants: merged.length,
+        userEntry: merged.find((r) => r.clientId === clientId) ?? json.userEntry,
+      });
+    } catch {
+      // Fallback cleanly to localStorage + cookie persistence if network is unavailable
+      const dateKey = getUtcDateKey();
+      const merged = mergeDailyEntries([], localEntries, dateKey, puzzleType);
+      setDailyData({
+        dateKey,
+        puzzleType,
+        scramble: generateDailyScramble(dateKey, puzzleType),
+        nextResetMs: getNextUtcMidnightMs(),
+        totalParticipants: merged.length,
+        leaderboard: merged,
+        userEntry: merged.find((r) => r.clientId === clientId) ?? null,
+      });
+    } finally {
+      setDailyLoading(false);
+    }
+  }, [clientId, puzzleType]);
+
+  useEffect(() => {
+    void fetchDailyChallenge();
+  }, [fetchDailyChallenge]);
+
+  const handleChangePlayerName = useCallback((nextName: string) => {
+    const clean = savePlayerName(nextName);
+    setPlayerName(clean);
+  }, []);
+
+  const handleSubmitDailySolve = useCallback(
+    async (payload: {
+      puzzleType: PuzzleType;
+      timeMs: number;
+      penalty: SolvePenalty;
+      source: 'stopwatch' | 'virtual3d';
+      scramble: string;
+    }): Promise<{ entryId: string | null; improved: boolean; rank: number | null }> => {
+      const dateKey = dailyData?.dateKey ?? getUtcDateKey();
+      const fallbackEntry: DailyLeaderboardEntry = {
+        id: `dc-local-${Date.now().toString(36)}`,
+        dateKey,
+        puzzleType: payload.puzzleType,
+        clientId,
+        playerName,
+        timeMs: payload.timeMs,
+        penalty: payload.penalty,
+        source: payload.source,
+        submittedAt: Date.now(),
+      };
+
+      try {
+        const res = await fetch('/api/daily-challenge/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            puzzleType: payload.puzzleType,
+            clientId,
+            playerName,
+            timeMs: payload.timeMs,
+            penalty: payload.penalty,
+            source: payload.source,
+          }),
+        });
+        if (!res.ok) throw new Error('Failed to post solve to Daily Challenge leaderboard.');
+        const json = (await res.json()) as DailyChallengeResponse & {
+          entry?: DailyLeaderboardEntry;
+          improved?: boolean;
+        };
+        const persistedEntry = json.entry ?? fallbackEntry;
+        const localEntries = upsertLocalDailyEntry(persistedEntry);
+        const merged = mergeDailyEntries(json.leaderboard, localEntries, json.dateKey, payload.puzzleType);
+        const userEntry = merged.find((r) => r.clientId === clientId) ?? json.userEntry;
+        setDailyData({
+          ...json,
+          leaderboard: merged,
+          totalParticipants: merged.length,
+          userEntry,
+        });
+        setDailyError(null);
+        return {
+          entryId: persistedEntry.id,
+          improved: json.improved ?? true,
+          rank: userEntry?.rank ?? null,
+        };
+      } catch {
+        // Persist in localStorage & cookie so user's Daily Challenge attempt is never lost
+        const localEntries = upsertLocalDailyEntry(fallbackEntry);
+        const merged = mergeDailyEntries(dailyData?.leaderboard ?? [], localEntries, dateKey, payload.puzzleType);
+        const userEntry = merged.find((r) => r.clientId === clientId) ?? null;
+        setDailyData({
+          dateKey,
+          puzzleType: payload.puzzleType,
+          scramble: dailyData?.scramble ?? generateDailyScramble(dateKey, payload.puzzleType),
+          nextResetMs: dailyData?.nextResetMs ?? getNextUtcMidnightMs(),
+          totalParticipants: merged.length,
+          leaderboard: merged,
+          userEntry,
+        });
+        return {
+          entryId: fallbackEntry.id,
+          improved: true,
+          rank: userEntry?.rank ?? null,
+        };
+      }
+    },
+    [clientId, dailyData, playerName]
+  );
+
+  const handlePatchDailyEntry = useCallback(
+    async (entryId: string, patch: { penalty?: SolvePenalty; playerName?: string }) => {
+      patchLocalDailyEntry(entryId, patch);
+      try {
+        const res = await fetch(`/api/daily-challenge/entry/${encodeURIComponent(entryId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId,
+            ...patch,
+          }),
+        });
+        if (res.ok) {
+          const json = (await res.json()) as DailyChallengeResponse;
+          const localEntries = loadLocalDailyEntries();
+          const merged = mergeDailyEntries(json.leaderboard, localEntries, json.dateKey, json.puzzleType);
+          setDailyData({
+            ...json,
+            leaderboard: merged,
+            totalParticipants: merged.length,
+            userEntry: merged.find((r) => r.clientId === clientId) ?? json.userEntry,
+          });
+          return;
+        }
+      } catch {
+        // fall through to local re-rank
+      }
+      if (dailyData) {
+        const localEntries = loadLocalDailyEntries();
+        const merged = mergeDailyEntries([], localEntries, dailyData.dateKey, dailyData.puzzleType);
+        setDailyData({
+          ...dailyData,
+          leaderboard: merged,
+          totalParticipants: merged.length,
+          userEntry: merged.find((r) => r.clientId === clientId) ?? null,
+        });
+      }
+    },
+    [clientId, dailyData]
+  );
 
   // Filtered puzzle records & stats
   const puzzleRecords = useMemo(
@@ -325,19 +515,24 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
           style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surfaceSubtle }}
         >
           {/* Left: View Switcher */}
-          <div className="flex items-center gap-1 p-1 rounded-xl border" style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surface }}>
+          <div
+            role="tablist"
+            aria-label="Timing workspace views"
+            className="flex items-center gap-1 p-1 rounded-xl border"
+            style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surface }}
+          >
             <button
               type="button"
               role="tab"
               aria-selected={viewTab === 'stopwatch'}
               onClick={() => setViewTab('stopwatch')}
-              className="h-9 px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-2.5 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               style={{
                 backgroundColor: viewTab === 'stopwatch' ? theme.ui.accent : 'transparent',
                 color: viewTab === 'stopwatch' ? theme.ui.accentFg : theme.ui.muted,
               }}
             >
-              <Timer className="w-4 h-4" />
+              <Timer className="w-4 h-4 shrink-0" />
               <span>Stopwatch</span>
             </button>
             <button
@@ -345,14 +540,31 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
               role="tab"
               aria-selected={viewTab === 'dashboard'}
               onClick={() => setViewTab('dashboard')}
-              className="h-9 px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-2.5 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               style={{
                 backgroundColor: viewTab === 'dashboard' ? theme.ui.accent : 'transparent',
                 color: viewTab === 'dashboard' ? theme.ui.accentFg : theme.ui.muted,
               }}
             >
-              <BarChart3 className="w-4 h-4" />
-              <span>Dashboard & Graphs</span>
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              <span className="sm:hidden">Stats</span>
+              <span className="hidden sm:inline">Dashboard & Graphs</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              data-testid="tab-daily-challenge"
+              aria-selected={viewTab === 'daily'}
+              onClick={() => setViewTab('daily')}
+              className="h-9 px-2.5 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              style={{
+                backgroundColor: viewTab === 'daily' ? theme.ui.accent : 'transparent',
+                color: viewTab === 'daily' ? theme.ui.accentFg : theme.ui.muted,
+              }}
+            >
+              <Trophy className="w-4 h-4 shrink-0" />
+              <span className="sm:hidden">Daily</span>
+              <span className="hidden sm:inline">Daily Challenge</span>
             </button>
           </div>
 
@@ -629,6 +841,16 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
           {/* ==================== VIEW 2: ANALYTICS DASHBOARD & GRAPHS ==================== */}
           {viewTab === 'dashboard' && (
             <div className="flex flex-col gap-5">
+              {/* Global Daily Challenge Leaderboard Entry Point */}
+              <DailyChallengeEntryCard
+                theme={theme}
+                puzzleType={puzzleType}
+                data={dailyData}
+                loading={dailyLoading}
+                onOpenDailyLeaderboard={() => setViewTab('daily')}
+                onPlayDailyIn3D={onPlayDailyIn3D}
+              />
+
               {/* 4-Column KPI Summary Strip (Single Elevation, Clean Hairline Dividers) */}
               <div
                 className="grid grid-cols-2 lg:grid-cols-4 gap-3"
@@ -946,6 +1168,26 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
                 )}
               </div>
             </div>
+          )}
+
+          {/* ==================== VIEW 3: DAILY CHALLENGE & GLOBAL LEADERBOARD ==================== */}
+          {viewTab === 'daily' && (
+            <DailyChallengePanel
+              theme={theme}
+              puzzleType={puzzleType}
+              clientId={clientId}
+              playerName={playerName}
+              data={dailyData}
+              loading={dailyLoading}
+              error={dailyError}
+              onChangePlayerName={handleChangePlayerName}
+              onRefresh={() => void fetchDailyChallenge()}
+              onSubmitDailySolve={handleSubmitDailySolve}
+              onPatchDailyEntry={handlePatchDailyEntry}
+              onAddLocalRecord={onAddRecord}
+              onUpdateLocalPenalty={onUpdatePenalty}
+              onPlayDailyIn3D={onPlayDailyIn3D}
+            />
           )}
         </div>
       </div>

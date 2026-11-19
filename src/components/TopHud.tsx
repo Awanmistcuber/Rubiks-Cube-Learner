@@ -10,6 +10,7 @@ interface TopHudProps {
   elapsedMs: number;
   isSolved: boolean;
   hasScrambled: boolean;
+  activeDailyDateKey?: string | null;
   isMuted: boolean;
   dockCollapsed: boolean;
   onSelectPuzzle: (p: PuzzleType) => void;
@@ -38,6 +39,7 @@ export const TopHud: React.FC<TopHudProps> = ({
   elapsedMs,
   isSolved,
   hasScrambled,
+  activeDailyDateKey,
   isMuted,
   dockCollapsed,
   onSelectPuzzle,
@@ -126,10 +128,16 @@ export const TopHud: React.FC<TopHudProps> = ({
 
           <span
             className="hidden md:inline text-xs font-medium"
-            style={{ color: isSolved ? theme.ui.accent : theme.ui.muted }}
+            style={{ color: activeDailyDateKey || isSolved ? theme.ui.accent : theme.ui.muted }}
             data-testid="solve-status"
           >
-            {isSolved ? (hasScrambled ? 'Solved' : 'Ready') : 'In Progress'}
+            {activeDailyDateKey
+              ? `Daily · ${activeDailyDateKey}`
+              : isSolved
+                ? hasScrambled
+                  ? 'Solved'
+                  : 'Ready'
+                : 'In Progress'}
           </span>
         </div>
       </div>

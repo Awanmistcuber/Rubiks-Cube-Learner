@@ -72,6 +72,11 @@ export interface SolveSnapshot {
   elapsedMs: number;
   bestMs: number | null;
   isNewRecord: boolean;
+  dailyChallenge?: {
+    dateKey: string;
+    rank: number | null;
+    totalParticipants: number;
+  };
 }
 
 export interface ThemePalette {
