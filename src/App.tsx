@@ -1,0 +1,749 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { BottomDock } from './components/BottomDock';
+import { PauseModal, VictoryModal } from './components/Modals';
+import { TimerDashboardModal, type TimerDashboardTab } from './components/TimerDashboardModal';
+import { TitleScreen } from './components/TitleScreen';
+import { TopHud } from './components/TopHud';
+import { cubeAudio } from './cube/audio';
+import {
+  computeSolutionFromHistory,
+  generateScramble,
+  invertMove,
+  parseAlgorithm,
+  parseNotation,
+  simplifyMoves,
+} from './cube/cubeLogic';
+import { CURRICULUM } from './cube/curriculum';
+import { THEMES } from './cube/themes';
+import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
+import {
+  createSeedRecords,
+  loadSolveRecords,
+  saveSolveRecords,
+  type SolvePenalty,
+  type SolveRecord,
+} from './cube/timerStats';
+import type {
+  CubeMove,
+  DockTab,
+  GameState,
+  LessonStep,
+  PuzzleType,
+  SolveSnapshot,
+  ThemeId,
+} from './cube/types';
+
+function readBestTime(puzzle: PuzzleType): number | null {
+  try {
+    const raw = localStorage.getItem(`kubi_best_${puzzle}`);
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBestTime(puzzle: PuzzleType, ms: number) {
+  try {
+    localStorage.setItem(`kubi_best_${puzzle}`, String(Math.round(ms)));
+  } catch {
+    // ignore storage restrictions
+  }
+}
+
+export default function App() {
+  const canvasMountRef = useRef<HTMLDivElement | null>(null);
+  const engineRef = useRef<ThreeCubeEngine | null>(null);
+
+  // Core UI state
+  const [gameState, setGameState] = useState<GameState>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('autostart') === '1') return 'playing';
+    }
+    return 'title';
+  });
+  const [puzzleType, setPuzzleType] = useState<PuzzleType>('3x3');
+  const [themeId, setThemeId] = useState<ThemeId>('atelier');
+  const [activeTab, setActiveTab] = useState<DockTab>('play');
+  const [dockCollapsed, setDockCollapsed] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [explodeAmount, setExplodeAmount] = useState(0);
+  const [turnSpeed, setTurnSpeed] = useState(1.1);
+
+  // Gameplay & Solve tracking
+  const [moveCount, setMoveCount] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [isSolved, setIsSolved] = useState(true);
+  const [hasScrambled, setHasScrambled] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
+  const [hintMove, setHintMove] = useState<CubeMove | null>(null);
+  const [recentNotations, setRecentNotations] = useState<string[]>([]);
+  const [victorySnapshot, setVictorySnapshot] = useState<SolveSnapshot | null>(null);
+
+  // Built-in Stopwatch & Timing Analytics Dashboard state
+  const [timerModalTab, setTimerModalTab] = useState<TimerDashboardTab | null>(null);
+  const [solveRecords, setSolveRecords] = useState<SolveRecord[]>(() => loadSolveRecords());
+
+  // Curriculum Lesson state
+  const [activeLessonId, setActiveLessonId] = useState<string>(CURRICULUM['3x3'][0].id);
+  const [lessonStepIndex, setLessonStepIndex] = useState(0);
+
+  // Mutable refs for 60Hz engine callbacks (never tear down WebGL!)
+  const historyRef = useRef<CubeMove[]>([]);
+  const currentScrambleRef = useRef<string>('');
+  const timerModalOpenRef = useRef<boolean>(false);
+  const puzzleRef = useRef<PuzzleType>(puzzleType);
+  const gameStateRef = useRef<GameState>(gameState);
+  const hasScrambledRef = useRef(false);
+  const timerRunningRef = useRef(false);
+  const timerStartRef = useRef(0);
+  const elapsedAccumRef = useRef(0);
+  const moveCountRef = useRef(0);
+  const isScramblingRef = useRef(false);
+  const isAutoSolvingRef = useRef(false);
+  const activeTabRef = useRef<DockTab>(activeTab);
+
+  puzzleRef.current = puzzleType;
+  gameStateRef.current = gameState;
+  activeTabRef.current = activeTab;
+  timerModalOpenRef.current = timerModalTab !== null;
+
+  useEffect(() => {
+    saveSolveRecords(solveRecords);
+  }, [solveRecords]);
+
+  const theme = THEMES[themeId];
+
+  // Sync CSS theme variables and document.body.dataset.state
+  useEffect(() => {
+    document.body.dataset.state = gameState;
+  }, [gameState]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--kubi-bg', theme.ui.bg);
+    root.style.setProperty('--kubi-surface', theme.ui.surface);
+    root.style.setProperty('--kubi-surface-subtle', theme.ui.surfaceSubtle);
+    root.style.setProperty('--kubi-border', theme.ui.border);
+    root.style.setProperty('--kubi-text', theme.ui.text);
+    root.style.setProperty('--kubi-muted', theme.ui.muted);
+    root.style.setProperty('--kubi-accent', theme.ui.accent);
+    root.style.setProperty('--kubi-accent-fg', theme.ui.accentFg);
+    engineRef.current?.applyTheme(themeId);
+  }, [theme, themeId]);
+
+  // Smooth solve timer tick (10Hz throttled React update while actively solving)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (timerRunningRef.current && gameStateRef.current === 'playing') {
+        const total = elapsedAccumRef.current + (performance.now() - timerStartRef.current);
+        setElapsedMs(total);
+      }
+    }, 100);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Mount Three.js engine ONCE in isolated ref container
+  useEffect(() => {
+    const mount = canvasMountRef.current;
+    if (!mount) return;
+
+    const engine = new ThreeCubeEngine(
+      mount,
+      {
+        onMoveApplied: (move, solvedNow, isFromQueue) => {
+          // Track full move history for guaranteed accurate Undo & Hint/Auto-Solve
+          const nextHistory = simplifyMoves([...historyRef.current, move], puzzleRef.current);
+          historyRef.current = nextHistory;
+          setRecentNotations(nextHistory.slice(-24).map((m) => m.notation));
+
+          if (!isScramblingRef.current) {
+            if (!isFromQueue || isAutoSolvingRef.current) {
+              moveCountRef.current += 1;
+              setMoveCount(moveCountRef.current);
+            }
+            if (hasScrambledRef.current && !timerRunningRef.current && !solvedNow) {
+              timerRunningRef.current = true;
+              timerStartRef.current = performance.now();
+            }
+          }
+
+          setIsSolved(solvedNow);
+
+          // Update live hint arrow if a hint was displayed
+          if (solvedNow) {
+            engine.clearGuideArrow();
+            setHintMove(null);
+          }
+
+          // Trigger Victory celebration when a scrambled cube is solved in Play mode!
+          if (solvedNow && hasScrambledRef.current && !isScramblingRef.current) {
+            const finalElapsed = timerRunningRef.current
+              ? elapsedAccumRef.current + (performance.now() - timerStartRef.current)
+              : elapsedAccumRef.current;
+            timerRunningRef.current = false;
+            elapsedAccumRef.current = finalElapsed;
+            setElapsedMs(finalElapsed);
+
+            const prevBest = readBestTime(puzzleRef.current);
+            const qualifiesForRecord = !isAutoSolvingRef.current && finalElapsed > 200;
+            const isNewRecord = qualifiesForRecord && (prevBest === null || finalElapsed < prevBest);
+            if (isNewRecord) {
+              writeBestTime(puzzleRef.current, finalElapsed);
+            }
+
+            if (qualifiesForRecord) {
+              const virtualRec: SolveRecord = {
+                id: `v3d-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                puzzleType: puzzleRef.current,
+                timeMs: Math.round(finalElapsed),
+                penalty: 'none',
+                scramble: currentScrambleRef.current || '3D Scramble',
+                source: 'virtual3d',
+                moves: moveCountRef.current,
+                timestamp: Date.now(),
+              };
+              setSolveRecords((prev) => [...prev, virtualRec]);
+            }
+
+            const snapshot: SolveSnapshot = {
+              puzzleType: puzzleRef.current,
+              moves: moveCountRef.current,
+              elapsedMs: finalElapsed,
+              bestMs: isNewRecord ? finalElapsed : prevBest,
+              isNewRecord,
+            };
+
+            hasScrambledRef.current = false;
+            setHasScrambled(false);
+            isAutoSolvingRef.current = false;
+            setIsBusy(false);
+
+            engine.triggerVictoryCelebration();
+            setVictorySnapshot(snapshot);
+            setGameState('gameover');
+          }
+        },
+        onQueueEmpty: (solvedNow) => {
+          if (isScramblingRef.current) {
+            isScramblingRef.current = false;
+            hasScrambledRef.current = !solvedNow;
+            setHasScrambled(!solvedNow);
+            moveCountRef.current = 0;
+            setMoveCount(0);
+            elapsedAccumRef.current = 0;
+            timerRunningRef.current = false;
+            setElapsedMs(0);
+          }
+          isAutoSolvingRef.current = false;
+          setIsBusy(false);
+        },
+      },
+      'atelier'
+    );
+
+    engineRef.current = engine;
+    engine.setGameState(gameStateRef.current);
+
+    return () => {
+      engine.dispose();
+      engineRef.current = null;
+    };
+  }, []);
+
+  // Sync game state changes to 3D camera framing & pause timer hygiene
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    if (gameState === 'paused') {
+      if (timerRunningRef.current) {
+        elapsedAccumRef.current += performance.now() - timerStartRef.current;
+        timerRunningRef.current = false;
+      }
+    } else if (gameState === 'playing') {
+      if (hasScrambledRef.current && moveCountRef.current > 0 && !isSolved && !timerRunningRef.current) {
+        timerStartRef.current = performance.now();
+        timerRunningRef.current = true;
+      }
+    }
+
+    engine.setGameState(gameState);
+  }, [gameState, isSolved]);
+
+  const resetProgressTrackers = useCallback(() => {
+    historyRef.current = [];
+    setRecentNotations([]);
+    moveCountRef.current = 0;
+    setMoveCount(0);
+    elapsedAccumRef.current = 0;
+    timerRunningRef.current = false;
+    setElapsedMs(0);
+    hasScrambledRef.current = false;
+    setHasScrambled(false);
+    setIsSolved(true);
+    setHintMove(null);
+    isScramblingRef.current = false;
+    isAutoSolvingRef.current = false;
+    setIsBusy(false);
+    setLessonStepIndex(0);
+  }, []);
+
+  const handleStartStudio = useCallback(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    cubeAudio.playUiTick();
+    // Reset cleanly from title demo moves so the studio starts crisp & ready
+    engineRef.current?.loadPuzzle(puzzleRef.current, false);
+    resetProgressTrackers();
+    setVictorySnapshot(null);
+    document.body.dataset.state = 'playing';
+    setGameState('playing');
+  }, [resetProgressTrackers]);
+
+  const handleSelectPuzzle = useCallback(
+    (nextPuzzle: PuzzleType) => {
+      if (nextPuzzle === puzzleRef.current && gameStateRef.current !== 'title') return;
+      setPuzzleType(nextPuzzle);
+      puzzleRef.current = nextPuzzle;
+      setActiveLessonId(CURRICULUM[nextPuzzle][0].id);
+      resetProgressTrackers();
+      engineRef.current?.loadPuzzle(nextPuzzle, true);
+    },
+    [resetProgressTrackers]
+  );
+
+  const handleSelectTheme = useCallback((nextTheme: ThemeId) => {
+    cubeAudio.playUiTick();
+    setThemeId(nextTheme);
+  }, []);
+
+  const handleScramble = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine || isBusy) return;
+    cubeAudio.playUiTick();
+    engine.clearGuideArrow();
+    setHintMove(null);
+    setVictorySnapshot(null);
+    setGameState('playing');
+
+    // Start scramble from fresh solved state for predictable scramble length
+    engine.loadPuzzle(puzzleRef.current, false);
+    resetProgressTrackers();
+
+    const scrambleMoves = generateScramble(puzzleRef.current);
+    currentScrambleRef.current = scrambleMoves.map((m) => m.notation).join(' ');
+    isScramblingRef.current = true;
+    setIsBusy(true);
+    engine.enqueueMoves(scrambleMoves, 2.35);
+  }, [isBusy, resetProgressTrackers]);
+
+  const handleApplyScrambleTo3D = useCallback(
+    (targetPuzzle: PuzzleType, scrambleStr: string) => {
+      const engine = engineRef.current;
+      if (!engine) return;
+      cubeAudio.playUiTick();
+      setTimerModalTab(null);
+      setVictorySnapshot(null);
+      setGameState('playing');
+      setPuzzleType(targetPuzzle);
+      puzzleRef.current = targetPuzzle;
+      setActiveLessonId(CURRICULUM[targetPuzzle][0].id);
+
+      engine.loadPuzzle(targetPuzzle, false);
+      resetProgressTrackers();
+      currentScrambleRef.current = scrambleStr;
+
+      const moves = parseAlgorithm(scrambleStr, targetPuzzle);
+      if (moves.length > 0) {
+        isScramblingRef.current = true;
+        setIsBusy(true);
+        engine.enqueueMoves(moves, 2.6);
+      }
+    },
+    [resetProgressTrackers]
+  );
+
+  const handleAddSolveRecord = useCallback((rec: SolveRecord) => {
+    setSolveRecords((prev) => [...prev, rec]);
+  }, []);
+
+  const handleUpdateSolvePenalty = useCallback((id: string, penalty: SolvePenalty) => {
+    setSolveRecords((prev) => prev.map((r) => (r.id === id ? { ...r, penalty } : r)));
+  }, []);
+
+  const handleDeleteSolveRecord = useCallback((id: string) => {
+    setSolveRecords((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+
+  const handleClearPuzzleRecords = useCallback((puzzle: PuzzleType) => {
+    setSolveRecords((prev) => prev.filter((r) => r.puzzleType !== puzzle));
+  }, []);
+
+  const handleRestoreDemoRecords = useCallback(() => {
+    setSolveRecords(createSeedRecords());
+  }, []);
+
+  const handleManualMove = useCallback(
+    (notation: string) => {
+      const engine = engineRef.current;
+      if (!engine || isBusy) return;
+      const move = parseNotation(notation, puzzleRef.current);
+      if (!move) return;
+      engine.clearGuideArrow();
+      setHintMove(null);
+      engine.enqueueMove(move, false, 1.0);
+    },
+    [isBusy]
+  );
+
+  const handleUndo = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine || isBusy || historyRef.current.length === 0) return;
+    const last = historyRef.current[historyRef.current.length - 1];
+    const inv = invertMove(last);
+    engine.clearGuideArrow();
+    setHintMove(null);
+    engine.enqueueMove(inv, false, 1.25);
+  }, [isBusy]);
+
+  const handleHint = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine || isBusy) return;
+    const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
+    if (solution.length === 0) return;
+    const next = solution[0];
+    cubeAudio.playUiTick();
+    setHintMove(next);
+    engine.showGuideArrow(next);
+  }, [isBusy]);
+
+  const handleAutoSolve = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine || isBusy) return;
+    const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
+    if (solution.length === 0) return;
+    cubeAudio.playUiTick();
+    engine.clearGuideArrow();
+    setHintMove(null);
+    isAutoSolvingRef.current = true;
+    setIsBusy(true);
+    engine.enqueueMoves(solution, 1.85);
+  }, [isBusy]);
+
+  const handleResetCube = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    cubeAudio.playUiTick();
+    engine.loadPuzzle(puzzleRef.current, true);
+    resetProgressTrackers();
+    setVictorySnapshot(null);
+    if (gameStateRef.current === 'paused' || gameStateRef.current === 'gameover') {
+      setGameState('playing');
+    }
+  }, [resetProgressTrackers]);
+
+  const handleExplodeChange = useCallback((v: number) => {
+    setExplodeAmount(v);
+    engineRef.current?.setExplodeAmount(v);
+  }, []);
+
+  const handleSpeedChange = useCallback((v: number) => {
+    setTurnSpeed(v);
+    engineRef.current?.setTurnSpeed(v);
+  }, []);
+
+  const handleRunAlgorithm = useCallback(
+    (notations: string[]) => {
+      const engine = engineRef.current;
+      if (!engine || isBusy) return;
+      const moves = parseAlgorithm(notations, puzzleRef.current);
+      if (moves.length === 0) return;
+      cubeAudio.playUiTick();
+      engine.clearGuideArrow();
+      setHintMove(null);
+      setIsBusy(true);
+      engine.enqueueMoves(moves, 1.25);
+    },
+    [isBusy]
+  );
+
+  // Interactive Lesson Handlers
+  const handleStageLesson = useCallback(
+    (lesson: LessonStep) => {
+      const engine = engineRef.current;
+      if (!engine || isBusy) return;
+      resetProgressTrackers();
+      setActiveLessonId(lesson.id);
+      setLessonStepIndex(0);
+      engine.applySetupInstantly(lesson.setupMoves);
+      historyRef.current = parseAlgorithm(lesson.setupMoves, puzzleRef.current);
+      setIsSolved(false);
+
+      const firstMove = parseNotation(lesson.algorithm[0], puzzleRef.current);
+      setHintMove(firstMove);
+      engine.showGuideArrow(firstMove);
+    },
+    [isBusy, resetProgressTrackers]
+  );
+
+  const handleSelectLesson = useCallback(
+    (lesson: LessonStep) => {
+      handleStageLesson(lesson);
+    },
+    [handleStageLesson]
+  );
+
+  const handleStepLesson = useCallback(
+    (lesson: LessonStep) => {
+      const engine = engineRef.current;
+      if (!engine || isBusy) return;
+      if (lessonStepIndex >= lesson.algorithm.length) return;
+      const move = parseNotation(lesson.algorithm[lessonStepIndex], puzzleRef.current);
+      if (!move) return;
+
+      const nextIdx = lessonStepIndex + 1;
+      setLessonStepIndex(nextIdx);
+      engine.enqueueMove(move, true, 0.95);
+
+      if (nextIdx < lesson.algorithm.length) {
+        const upcoming = parseNotation(lesson.algorithm[nextIdx], puzzleRef.current);
+        setHintMove(upcoming);
+        engine.showGuideArrow(upcoming);
+      } else {
+        setHintMove(null);
+        engine.clearGuideArrow();
+      }
+    },
+    [isBusy, lessonStepIndex]
+  );
+
+  const handlePlayLesson = useCallback(
+    (lesson: LessonStep) => {
+      const engine = engineRef.current;
+      if (!engine || isBusy) return;
+      // Stage fresh first, then animate entire algorithm smoothly
+      resetProgressTrackers();
+      setActiveLessonId(lesson.id);
+      engine.applySetupInstantly(lesson.setupMoves);
+      historyRef.current = parseAlgorithm(lesson.setupMoves, puzzleRef.current);
+      setIsSolved(false);
+
+      const algMoves = parseAlgorithm(lesson.algorithm, puzzleRef.current);
+      setLessonStepIndex(algMoves.length);
+      setIsBusy(true);
+      engine.clearGuideArrow();
+      engine.enqueueMoves(algMoves, 0.85);
+    },
+    [isBusy, resetProgressTrackers]
+  );
+
+  const handleToggleMute = useCallback(() => {
+    setIsMuted((prev) => {
+      const next = !prev;
+      cubeAudio.setMuted(next);
+      return next;
+    });
+  }, []);
+
+  // Global Keyboard Shortcuts (WCA moves, Enter/Space title start, Esc/P pause, M mute, H HUD, Z undo, T stopwatch)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (timerModalOpenRef.current) return;
+
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if (isTyping) return;
+
+      if (gameStateRef.current === 'title') {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleStartStudio();
+        }
+        return;
+      }
+
+      if (e.key === 'Escape' || e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (gameStateRef.current === 'playing') setGameState('paused');
+        else if (gameStateRef.current === 'paused') setGameState('playing');
+        return;
+      }
+
+      if (gameStateRef.current !== 'playing') return;
+
+      const upper = e.key.toUpperCase();
+      if (['U', 'D', 'L', 'R', 'F', 'B'].includes(upper)) {
+        e.preventDefault();
+        const notation = e.shiftKey ? `${upper}'` : upper;
+        handleManualMove(notation);
+        return;
+      }
+
+      if (upper === 'T') {
+        e.preventDefault();
+        setTimerModalTab('stopwatch');
+      } else if (upper === 'M') {
+        e.preventDefault();
+        handleToggleMute();
+      } else if (upper === 'H') {
+        e.preventDefault();
+        setDockCollapsed((prev) => !prev);
+      } else if (upper === 'Z') {
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleManualMove, handleStartStudio, handleToggleMute, handleUndo]);
+
+  return (
+    <main className="relative w-screen h-screen overflow-hidden" style={{ backgroundColor: theme.ui.bg }}>
+      {/* Isolated Full-Bleed WebGL Canvas Container (never re-rendered by HUD updates) */}
+      <div
+        ref={canvasMountRef}
+        data-testid="cube-viewport"
+        className="fixed inset-0 w-full h-full z-0"
+      />
+
+      {/* Title Screen Overlay */}
+      {gameState === 'title' && (
+        <TitleScreen
+          theme={theme}
+          puzzleType={puzzleType}
+          onSelectPuzzle={handleSelectPuzzle}
+          onSelectTheme={handleSelectTheme}
+          onStart={handleStartStudio}
+        />
+      )}
+
+      {/* Active Studio HUD */}
+      {gameState !== 'title' && (
+        <>
+          <TopHud
+            theme={theme}
+            puzzleType={puzzleType}
+            moveCount={moveCount}
+            elapsedMs={elapsedMs}
+            isSolved={isSolved}
+            hasScrambled={hasScrambled}
+            isMuted={isMuted}
+            dockCollapsed={dockCollapsed}
+            onSelectPuzzle={handleSelectPuzzle}
+            onOpenStopwatch={() => {
+              cubeAudio.playUiTick();
+              setTimerModalTab('stopwatch');
+            }}
+            onOpenDashboard={() => {
+              cubeAudio.playUiTick();
+              setTimerModalTab('dashboard');
+            }}
+            onResetCamera={() => engineRef.current?.resetCamera()}
+            onToggleMute={handleToggleMute}
+            onToggleDock={() => setDockCollapsed((p) => !p)}
+            onPause={() => setGameState('paused')}
+          />
+
+          <BottomDock
+            theme={theme}
+            puzzleType={puzzleType}
+            activeTab={activeTab}
+            collapsed={dockCollapsed}
+            isBusy={isBusy}
+            isSolved={isSolved}
+            canUndo={historyRef.current.length > 0}
+            hintMove={hintMove}
+            explodeAmount={explodeAmount}
+            turnSpeed={turnSpeed}
+            activeLessonId={activeLessonId}
+            lessonStepIndex={lessonStepIndex}
+            recentNotations={recentNotations}
+            onSetTab={(tab) => {
+              cubeAudio.playUiTick();
+              setActiveTab(tab);
+              if (tab === 'learn') {
+                const lessons = CURRICULUM[puzzleType];
+                const current = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
+                if (isSolved && !hasScrambled) {
+                  handleStageLesson(current);
+                }
+              }
+            }}
+            onToggleCollapse={() => setDockCollapsed((p) => !p)}
+            onScramble={handleScramble}
+            onUndo={handleUndo}
+            onHint={handleHint}
+            onAutoSolve={handleAutoSolve}
+            onResetCube={handleResetCube}
+            onManualMove={handleManualMove}
+            onExplodeChange={handleExplodeChange}
+            onSpeedChange={handleSpeedChange}
+            onSelectTheme={handleSelectTheme}
+            onRunAlgorithm={handleRunAlgorithm}
+            onSelectLesson={handleSelectLesson}
+            onStageLesson={handleStageLesson}
+            onStepLesson={handleStepLesson}
+            onPlayLesson={handlePlayLesson}
+          />
+        </>
+      )}
+
+      {/* Pause Modal */}
+      {gameState === 'paused' && (
+        <PauseModal
+          theme={theme}
+          onResume={() => setGameState('playing')}
+          onRestart={handleResetCube}
+          onSelectTheme={handleSelectTheme}
+          onBackToTitle={() => {
+            engineRef.current?.clearGuideArrow();
+            setGameState('title');
+          }}
+        />
+      )}
+
+      {/* Victory Celebration Modal */}
+      {gameState === 'gameover' && victorySnapshot && (
+        <VictoryModal
+          theme={theme}
+          snapshot={victorySnapshot}
+          onPlayAgain={handleScramble}
+          onOpenLessons={() => {
+            setVictorySnapshot(null);
+            setGameState('playing');
+            setDockCollapsed(false);
+            setActiveTab('learn');
+            handleStageLesson(CURRICULUM[puzzleType][0]);
+          }}
+          onDismiss={() => {
+            setVictorySnapshot(null);
+            setGameState('playing');
+          }}
+        />
+      )}
+      {/* Built-in Speedcube Stopwatch & Analytics Dashboard Workspace */}
+      {timerModalTab !== null && (
+        <TimerDashboardModal
+          theme={theme}
+          puzzleType={puzzleType}
+          initialTab={timerModalTab}
+          records={solveRecords}
+          onClose={() => setTimerModalTab(null)}
+          onSelectPuzzle={handleSelectPuzzle}
+          onAddRecord={handleAddSolveRecord}
+          onUpdatePenalty={handleUpdateSolvePenalty}
+          onDeleteRecord={handleDeleteSolveRecord}
+          onClearPuzzleRecords={handleClearPuzzleRecords}
+          onRestoreDemoRecords={handleRestoreDemoRecords}
+          onApplyScrambleTo3D={handleApplyScrambleTo3D}
+        />
+      )}
+    </main>
+  );
+}

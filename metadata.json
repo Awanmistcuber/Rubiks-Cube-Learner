@@ -1,0 +1,6 @@
+{
+  "name": "Kubi Studio",
+  "description": "Interactive 3D Rubik's Cube learning studio and puzzle playground for 2x2, 3x3, 4x4, and Mirror cubes with tactile magnetic animations and curated Figma-inspired themes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
