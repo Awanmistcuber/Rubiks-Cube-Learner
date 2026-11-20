@@ -1,4 +1,4 @@
-import type { PuzzleType } from './types';
+import type { PuzzleType } from './types.ts';
 
 export type SolvePenalty = 'none' | '+2' | 'dnf';
 

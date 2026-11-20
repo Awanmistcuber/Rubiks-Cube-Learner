@@ -12,9 +12,9 @@ import {
   rankDailyEntries,
   sanitizePlayerName,
   type DailyLeaderboardEntry,
-} from './src/cube/dailyChallenge';
-import { getEffectiveTimeMs, type SolvePenalty } from './src/cube/timerStats';
-import type { PuzzleType } from './src/cube/types';
+} from './src/cube/dailyChallenge.ts';
+import { getEffectiveTimeMs, type SolvePenalty } from './src/cube/timerStats.ts';
+import type { PuzzleType } from './src/cube/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

@@ -1,6 +1,5 @@
-import type { SolvePenalty } from './timerStats';
-import { getEffectiveTimeMs } from './timerStats';
-import type { PuzzleType } from './types';
+import { getEffectiveTimeMs, type SolvePenalty } from './timerStats.ts';
+import type { PuzzleType } from './types.ts';
 
 export interface DailyLeaderboardEntry {
   id: string;
