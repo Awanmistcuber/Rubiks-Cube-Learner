@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart3, Eye, EyeOff, Pause, RotateCcw, Timer, Volume2, VolumeX } from 'lucide-react';
+import { BarChart3, Camera, Eye, EyeOff, Pause, RotateCcw, Timer, Volume2, VolumeX } from 'lucide-react';
 import { PUZZLE_META } from '../cube/curriculum';
 import type { PuzzleType, ThemePalette } from '../cube/types';
 
@@ -16,6 +16,7 @@ interface TopHudProps {
   onSelectPuzzle: (p: PuzzleType) => void;
   onOpenStopwatch: () => void;
   onOpenDashboard: () => void;
+  onExportSnapshot: () => void;
   onResetCamera: () => void;
   onToggleMute: () => void;
   onToggleDock: () => void;
@@ -45,6 +46,7 @@ export const TopHud: React.FC<TopHudProps> = ({
   onSelectPuzzle,
   onOpenStopwatch,
   onOpenDashboard,
+  onExportSnapshot,
   onResetCamera,
   onToggleMute,
   onToggleDock,
@@ -196,6 +198,22 @@ export const TopHud: React.FC<TopHudProps> = ({
             boxShadow: theme.ui.shadow,
           }}
         >
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="hud-export-snapshot-btn"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onExportSnapshot();
+            }}
+            aria-label="Export high-resolution cube screenshot"
+            title="Export High-Res Cube PNG"
+            className="hidden sm:flex w-9 h-9 sm:w-10 sm:h-10 rounded-lg items-center justify-center transition-colors duration-150 cursor-pointer"
+            style={{ color: theme.ui.text }}
+          >
+            <Camera className="w-4 h-4" />
+          </button>
+
           <button
             type="button"
             tabIndex={-1}

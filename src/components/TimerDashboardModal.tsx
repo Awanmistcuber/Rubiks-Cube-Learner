@@ -10,9 +10,11 @@ import {
   Timer,
   Trash2,
   Trophy,
+  Upload,
   X,
 } from 'lucide-react';
 import { cubeAudio } from '../cube/audio';
+import type { BackupImportMode } from '../cube/backup';
 import { PUZZLE_META } from '../cube/curriculum';
 import {
   generateDailyScramble,
@@ -52,6 +54,7 @@ interface TimerDashboardModalProps {
   puzzleType: PuzzleType;
   initialTab: TimerDashboardTab;
   records: SolveRecord[];
+  customThemesCount: number;
   onClose: () => void;
   onSelectPuzzle: (p: PuzzleType) => void;
   onAddRecord: (rec: SolveRecord) => void;
@@ -59,6 +62,8 @@ interface TimerDashboardModalProps {
   onDeleteRecord: (id: string) => void;
   onClearPuzzleRecords: (puzzle: PuzzleType) => void;
   onRestoreDemoRecords: () => void;
+  onExportBackupJson: () => { ok: boolean; message: string };
+  onImportBackupJson: (rawText: string, mode: BackupImportMode) => { ok: boolean; message: string };
   onApplyScrambleTo3D: (puzzle: PuzzleType, scramble: string) => void;
   onPlayDailyIn3D: (puzzle: PuzzleType, scramble: string, dateKey: string) => void;
 }
@@ -72,6 +77,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
   puzzleType,
   initialTab,
   records,
+  customThemesCount,
   onClose,
   onSelectPuzzle,
   onAddRecord,
@@ -79,6 +85,8 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
   onDeleteRecord,
   onClearPuzzleRecords,
   onRestoreDemoRecords,
+  onExportBackupJson,
+  onImportBackupJson,
   onApplyScrambleTo3D,
   onPlayDailyIn3D,
 }) => {
@@ -88,6 +96,20 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
   const [useInspection, setUseInspection] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'stopwatch' | 'virtual3d'>('all');
+  const [backupFeedback, setBackupFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleDashboardImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setBackupFeedback(onImportBackupJson(text, 'merge'));
+    } catch {
+      setBackupFeedback({ ok: false, message: 'Unable to read the selected JSON file.' });
+    }
+  };
 
   // Shared Daily Challenge & Global Leaderboard state
   const [clientId] = useState<string>(() => getOrCreateClientId());
@@ -991,34 +1013,99 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
                       type="button"
                       disabled={puzzleRecords.length === 0}
                       onClick={handleExportCsv}
-                      className="h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                      className="h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
                       style={{
                         backgroundColor: theme.ui.surface,
                         borderColor: theme.ui.border,
                         color: theme.ui.text,
                       }}
                     >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Export CSV</span>
+                      <Download className="w-3.5 h-3.5 shrink-0" />
+                      <span>CSV</span>
                     </button>
+
+                    <button
+                      type="button"
+                      data-testid="dashboard-export-json-btn"
+                      onClick={() => setBackupFeedback(onExportBackupJson())}
+                      title={`Export ${customThemesCount} custom themes & ${records.length} solves as JSON`}
+                      className="h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                      style={{
+                        backgroundColor: theme.ui.surface,
+                        borderColor: theme.ui.border,
+                        color: theme.ui.text,
+                      }}
+                    >
+                      <Download className="w-3.5 h-3.5 shrink-0" />
+                      <span>Backup JSON</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="dashboard-import-json-btn"
+                      onClick={() => backupFileInputRef.current?.click()}
+                      title="Import custom themes and solve records from a JSON backup"
+                      className="h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                      style={{
+                        backgroundColor: theme.ui.surface,
+                        borderColor: theme.ui.border,
+                        color: theme.ui.text,
+                      }}
+                    >
+                      <Upload className="w-3.5 h-3.5 shrink-0" />
+                      <span>Import JSON</span>
+                    </button>
+
+                    <input
+                      ref={backupFileInputRef}
+                      type="file"
+                      accept=".json,application/json"
+                      data-testid="dashboard-import-json-input"
+                      aria-label="Import backup JSON file into Timing Dashboard"
+                      onChange={(e) => void handleDashboardImportFile(e)}
+                      className="hidden"
+                    />
 
                     {puzzleRecords.length > 0 && (
                       <button
                         type="button"
                         onClick={() => onClearPuzzleRecords(puzzleType)}
-                        className="h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                        className="h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                         style={{
                           backgroundColor: theme.ui.surface,
                           borderColor: theme.ui.border,
                           color: theme.ui.muted,
                         }}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-3.5 h-3.5 shrink-0" />
                         <span>Clear</span>
                       </button>
                     )}
                   </div>
                 </div>
+
+                {backupFeedback && (
+                  <div
+                    role={backupFeedback.ok ? 'status' : 'alert'}
+                    data-testid="dashboard-backup-feedback"
+                    className="px-3.5 py-2 border-b flex items-center justify-between gap-2 text-xs font-medium"
+                    style={{
+                      backgroundColor: backupFeedback.ok ? theme.ui.accentSoft : 'rgba(220, 38, 38, 0.08)',
+                      borderColor: theme.ui.border,
+                      color: backupFeedback.ok ? theme.ui.text : '#DC2626',
+                    }}
+                  >
+                    <span>{backupFeedback.message}</span>
+                    <button
+                      type="button"
+                      onClick={() => setBackupFeedback(null)}
+                      aria-label="Dismiss backup notice"
+                      className="text-xs opacity-70 hover:opacity-100 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 {filteredTableRecords.length === 0 ? (
                   <div className="p-8 text-center">

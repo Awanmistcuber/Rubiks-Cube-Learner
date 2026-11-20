@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, Palette, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import { Camera, Check, Palette, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import { cubeAudio } from '../cube/audio';
 import {
   buildThemePaletteFromCustom,
@@ -23,6 +23,7 @@ interface PaletteStudioModalProps {
   onSaveCustomTheme: (record: CustomThemeRecord) => void;
   onSelectTheme: (themeKey: string) => void;
   onDeleteCustomTheme: (id: string) => void;
+  onExportSnapshot: () => void;
   onClose: () => void;
 }
 
@@ -40,6 +41,7 @@ export const PaletteStudioModal: React.FC<PaletteStudioModalProps> = ({
   onSaveCustomTheme,
   onSelectTheme,
   onDeleteCustomTheme,
+  onExportSnapshot,
   onClose,
 }) => {
   const editingExisting = useMemo(
@@ -203,22 +205,40 @@ export const PaletteStudioModal: React.FC<PaletteStudioModalProps> = ({
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              onPreviewPalette(null);
-              onClose();
-            }}
-            aria-label="Close Sticker Palette Studio"
-            className="w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 cursor-pointer"
-            style={{
-              backgroundColor: ui.surface,
-              borderColor: ui.border,
-              color: ui.text,
-            }}
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              data-testid="palette-export-snapshot-btn"
+              onClick={onExportSnapshot}
+              aria-label="Export high-resolution cube screenshot"
+              title="Export High-Res Cube PNG"
+              className="w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 cursor-pointer"
+              style={{
+                backgroundColor: ui.surface,
+                borderColor: ui.border,
+                color: ui.text,
+              }}
+            >
+              <Camera className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                onPreviewPalette(null);
+                onClose();
+              }}
+              aria-label="Close Sticker Palette Studio"
+              className="w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 cursor-pointer"
+              style={{
+                backgroundColor: ui.surface,
+                borderColor: ui.border,
+                color: ui.text,
+              }}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Scrollable Inspector Controls */}

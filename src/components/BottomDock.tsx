@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   BookOpen,
+  Camera,
   ChevronDown,
   ChevronUp,
   CloudRain,
@@ -65,6 +66,7 @@ interface BottomDockProps {
   onSpeedChange: (v: number) => void;
   onSelectTheme: (themeKey: string) => void;
   onOpenPaletteStudio: () => void;
+  onExportSnapshot: () => void;
   onSelectSoundscape: (s: AmbientSoundscapeId) => void;
   onAmbientVolumeChange: (v: number) => void;
   onRunAlgorithm: (notations: string[]) => void;
@@ -112,6 +114,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onSpeedChange,
   onSelectTheme,
   onOpenPaletteStudio,
+  onExportSnapshot,
   onSelectSoundscape,
   onAmbientVolumeChange,
   onRunAlgorithm,
@@ -588,23 +591,41 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t" style={{ borderColor: theme.ui.border }}>
                   {/* Studio & Custom Figma Themes */}
                   <div>
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-xs font-medium" style={{ color: theme.ui.muted }}>
-                        Studio & Custom Themes
+                    <div className="flex items-center justify-between gap-1.5 mb-2">
+                      <span className="text-xs font-medium truncate" style={{ color: theme.ui.muted }}>
+                        Studio &amp; Custom Themes
                       </span>
-                      <button
-                        type="button"
-                        data-testid="open-palette-studio-btn"
-                        onClick={onOpenPaletteStudio}
-                        className="h-7 px-2.5 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                        style={{
-                          backgroundColor: theme.ui.accentSoft,
-                          color: theme.ui.accent,
-                        }}
-                      >
-                        <Palette className="w-3 h-3 shrink-0" />
-                        <span>Customize Stickers</span>
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          data-testid="lab-export-snapshot-btn"
+                          onClick={onExportSnapshot}
+                          aria-label="Export high-resolution cube screenshot"
+                          title="Export High-Res Cube PNG"
+                          className="h-7 px-2 rounded-lg border text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                          style={{
+                            backgroundColor: theme.ui.surfaceSubtle,
+                            borderColor: theme.ui.border,
+                            color: theme.ui.text,
+                          }}
+                        >
+                          <Camera className="w-3 h-3 shrink-0" />
+                          <span>PNG</span>
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="open-palette-studio-btn"
+                          onClick={onOpenPaletteStudio}
+                          className="h-7 px-2.5 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                          style={{
+                            backgroundColor: theme.ui.accentSoft,
+                            color: theme.ui.accent,
+                          }}
+                        >
+                          <Palette className="w-3 h-3 shrink-0" />
+                          <span>Stickers</span>
+                        </button>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-1.5 max-h-[126px] overflow-y-auto kubi-scroll pr-0.5">
                       {[...THEME_LIST, ...customThemes.map(buildThemePaletteFromCustom)].map((t) => {

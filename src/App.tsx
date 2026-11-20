@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Camera } from 'lucide-react';
 import { BottomDock } from './components/BottomDock';
 import { PauseModal, VictoryModal } from './components/Modals';
 import { PaletteStudioModal } from './components/PaletteStudioModal';
@@ -16,6 +17,15 @@ import {
 } from './cube/cubeLogic';
 import { CURRICULUM } from './cube/curriculum';
 import {
+  createBackupPayload,
+  getBackupFilename,
+  mergeBackupData,
+  parseBackupJson,
+  serializeBackupJson,
+  triggerJsonDownload,
+  type BackupImportMode,
+} from './cube/backup';
+import {
   loadCustomThemes,
   resolveThemePalette,
   saveCustomThemes,
@@ -31,6 +41,7 @@ import {
   writeCookie,
   type DailyChallengeResponse,
 } from './cube/dailyChallenge';
+import { buildSnapshotFilename, triggerPngDownload } from './cube/snapshot';
 import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
 import {
   createSeedRecords,
@@ -117,6 +128,8 @@ export default function App() {
   const [hintMove, setHintMove] = useState<CubeMove | null>(null);
   const [recentNotations, setRecentNotations] = useState<string[]>([]);
   const [victorySnapshot, setVictorySnapshot] = useState<SolveSnapshot | null>(null);
+  const [snapshotToast, setSnapshotToast] = useState<{ ok: boolean; message: string } | null>(null);
+  const snapshotToastTimerRef = useRef<number | null>(null);
 
   // Built-in Stopwatch & Timing Analytics Dashboard state
   const [timerModalTab, setTimerModalTab] = useState<TimerDashboardTab | null>(null);
@@ -595,6 +608,120 @@ export default function App() {
     setSolveRecords(createSeedRecords());
   }, []);
 
+  const handleExportBackupJson = useCallback((): { ok: boolean; message: string } => {
+    try {
+      const payload = createBackupPayload({
+        customThemes,
+        solveRecords,
+        activeThemeId: themeKey,
+      });
+      const json = serializeBackupJson(payload);
+      triggerJsonDownload(json, getBackupFilename());
+      cubeAudio.playUiTick();
+      const tLabel = customThemes.length === 1 ? 'theme' : 'themes';
+      const sLabel = solveRecords.length === 1 ? 'solve' : 'solves';
+      return {
+        ok: true,
+        message: `Exported ${customThemes.length} custom ${tLabel} & ${solveRecords.length} ${sLabel}.`,
+      };
+    } catch {
+      return { ok: false, message: 'Could not generate backup file on this browser.' };
+    }
+  }, [customThemes, solveRecords, themeKey]);
+
+  const handleImportBackupJson = useCallback(
+    (rawText: string, mode: BackupImportMode = 'merge'): { ok: boolean; message: string } => {
+      const parsed = parseBackupJson(rawText);
+      if (!parsed.ok) {
+        return { ok: false, message: parsed.error };
+      }
+
+      const merged = mergeBackupData(
+        { customThemes, solveRecords },
+        parsed.payload,
+        mode
+      );
+
+      let nextThemeKey = themeKey;
+      const incomingActive = parsed.payload.activeThemeId;
+      if (incomingActive) {
+        const resolved = resolveThemePalette(incomingActive, merged.customThemes);
+        if (resolved.id === incomingActive) {
+          nextThemeKey = incomingActive;
+        }
+      } else if (mode === 'replace') {
+        const stillExists = resolveThemePalette(themeKey, merged.customThemes).id === themeKey;
+        if (!stillExists) nextThemeKey = 'atelier';
+      }
+
+      setCustomThemes(merged.customThemes);
+      saveCustomThemes(merged.customThemes, nextThemeKey);
+
+      setSolveRecords(merged.solveRecords);
+      saveSolveRecords(merged.solveRecords);
+
+      if (nextThemeKey !== themeKey) {
+        setThemeKey(nextThemeKey);
+        saveStudioPref('theme', nextThemeKey);
+      }
+
+      cubeAudio.playUiTick();
+
+      const skippedTotal = parsed.skippedThemes + parsed.skippedRecords;
+      const skippedNote = skippedTotal > 0 ? ` (${skippedTotal} invalid skipped)` : '';
+      if (mode === 'replace') {
+        return {
+          ok: true,
+          message: `Restored ${merged.customThemes.length} custom theme${merged.customThemes.length === 1 ? '' : 's'} & ${merged.solveRecords.length} solve${merged.solveRecords.length === 1 ? '' : 's'}${skippedNote}.`,
+        };
+      }
+      const themeTouch = merged.addedThemes + merged.updatedThemes;
+      return {
+        ok: true,
+        message: `Imported ${themeTouch} custom theme${themeTouch === 1 ? '' : 's'} & ${merged.addedRecords} new solve${merged.addedRecords === 1 ? '' : 's'}${skippedNote}.`,
+      };
+    },
+    [customThemes, solveRecords, themeKey]
+  );
+
+  const handleExportSnapshot = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    const showToast = (ok: boolean, message: string) => {
+      setSnapshotToast({ ok, message });
+      if (snapshotToastTimerRef.current !== null) {
+        window.clearTimeout(snapshotToastTimerRef.current);
+      }
+      snapshotToastTimerRef.current = window.setTimeout(() => {
+        setSnapshotToast(null);
+        snapshotToastTimerRef.current = null;
+      }, 2800);
+    };
+
+    const captured = engine.captureHighResSnapshot();
+    if (!captured) {
+      showToast(false, 'Could not capture cube screenshot on this browser.');
+      return;
+    }
+
+    const filename = buildSnapshotFilename({
+      puzzleType: puzzleRef.current,
+      themeName: theme.name,
+    });
+    triggerPngDownload(captured.dataUrl, filename);
+    cubeAudio.playUiTick();
+    showToast(true, `Saved ${captured.width}×${captured.height} PNG snapshot`);
+  }, [theme.name]);
+
+  useEffect(() => {
+    return () => {
+      if (snapshotToastTimerRef.current !== null) {
+        window.clearTimeout(snapshotToastTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleManualMove = useCallback(
     (notation: string) => {
       const engine = engineRef.current;
@@ -853,6 +980,7 @@ export default function App() {
               cubeAudio.playUiTick();
               setTimerModalTab('dashboard');
             }}
+            onExportSnapshot={handleExportSnapshot}
             onResetCamera={() => engineRef.current?.resetCamera()}
             onToggleMute={handleToggleMute}
             onToggleDock={() => setDockCollapsed((p) => !p)}
@@ -902,6 +1030,7 @@ export default function App() {
                 cubeAudio.playUiTick();
                 setPaletteStudioOpen(true);
               }}
+              onExportSnapshot={handleExportSnapshot}
               onSelectSoundscape={handleSelectSoundscape}
               onAmbientVolumeChange={handleAmbientVolumeChange}
               onRunAlgorithm={handleRunAlgorithm}
@@ -919,6 +1048,7 @@ export default function App() {
         <PauseModal
           theme={theme}
           customThemes={customThemes}
+          solveCount={solveRecords.length}
           soundscape={soundscape}
           ambientVolume={ambientVolume}
           onResume={() => setGameState('playing')}
@@ -931,6 +1061,9 @@ export default function App() {
           }}
           onSelectSoundscape={handleSelectSoundscape}
           onAmbientVolumeChange={handleAmbientVolumeChange}
+          onExportBackupJson={handleExportBackupJson}
+          onImportBackupJson={handleImportBackupJson}
+          onExportSnapshot={handleExportSnapshot}
           onBackToTitle={() => {
             engineRef.current?.clearGuideArrow();
             setGameState('title');
@@ -973,6 +1106,7 @@ export default function App() {
           onSaveCustomTheme={handleSaveCustomTheme}
           onSelectTheme={handleSelectTheme}
           onDeleteCustomTheme={handleDeleteCustomTheme}
+          onExportSnapshot={handleExportSnapshot}
           onClose={() => {
             setPreviewPalette(null);
             setPaletteStudioOpen(false);
@@ -987,6 +1121,7 @@ export default function App() {
           puzzleType={puzzleType}
           initialTab={timerModalTab}
           records={solveRecords}
+          customThemesCount={customThemes.length}
           onClose={() => setTimerModalTab(null)}
           onSelectPuzzle={handleSelectPuzzle}
           onAddRecord={handleAddSolveRecord}
@@ -994,9 +1129,30 @@ export default function App() {
           onDeleteRecord={handleDeleteSolveRecord}
           onClearPuzzleRecords={handleClearPuzzleRecords}
           onRestoreDemoRecords={handleRestoreDemoRecords}
+          onExportBackupJson={handleExportBackupJson}
+          onImportBackupJson={handleImportBackupJson}
           onApplyScrambleTo3D={handleApplyScrambleTo3D}
           onPlayDailyIn3D={handlePlayDailyIn3D}
         />
+      )}
+
+      {/* Non-intrusive High-Res Snapshot Confirmation Toast */}
+      {snapshotToast && (
+        <div
+          role={snapshotToast.ok ? 'status' : 'alert'}
+          aria-live="polite"
+          data-testid="snapshot-toast"
+          className="fixed top-[106px] sm:top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 whitespace-nowrap animate-kubi-enter"
+          style={{
+            backgroundColor: theme.ui.surface,
+            borderColor: snapshotToast.ok ? theme.ui.accent : 'rgba(220, 38, 38, 0.45)',
+            color: snapshotToast.ok ? theme.ui.text : '#DC2626',
+            boxShadow: theme.ui.shadow,
+          }}
+        >
+          <Camera className="w-3.5 h-3.5 shrink-0" style={{ color: snapshotToast.ok ? theme.ui.accent : '#DC2626' }} />
+          <span>{snapshotToast.message}</span>
+        </div>
       )}
     </main>
   );

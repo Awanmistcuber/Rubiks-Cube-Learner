@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Award,
   BookOpen,
+  Camera,
   CloudRain,
+  Download,
+  HardDrive,
   Headphones,
   Home,
   Music,
@@ -11,10 +14,12 @@ import {
   RotateCcw,
   Shuffle,
   Trophy,
+  Upload,
   VolumeX,
   Waves,
 } from 'lucide-react';
 import { AMBIENT_SOUNDSCAPES } from '../cube/audio';
+import type { BackupImportMode } from '../cube/backup';
 import { PUZZLE_META } from '../cube/curriculum';
 import { buildThemePaletteFromCustom, type CustomThemeRecord } from '../cube/customThemes';
 import { THEME_LIST } from '../cube/themes';
@@ -24,6 +29,7 @@ import { formatTimer } from './TopHud';
 interface PauseModalProps {
   theme: ThemePalette;
   customThemes: CustomThemeRecord[];
+  solveCount: number;
   soundscape: AmbientSoundscapeId;
   ambientVolume: number;
   onResume: () => void;
@@ -32,12 +38,16 @@ interface PauseModalProps {
   onOpenPaletteStudio: () => void;
   onSelectSoundscape: (s: AmbientSoundscapeId) => void;
   onAmbientVolumeChange: (v: number) => void;
+  onExportBackupJson: () => { ok: boolean; message: string };
+  onImportBackupJson: (rawText: string, mode: BackupImportMode) => { ok: boolean; message: string };
+  onExportSnapshot: () => void;
   onBackToTitle: () => void;
 }
 
 export const PauseModal: React.FC<PauseModalProps> = ({
   theme,
   customThemes,
+  solveCount,
   soundscape,
   ambientVolume,
   onResume,
@@ -46,8 +56,28 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   onOpenPaletteStudio,
   onSelectSoundscape,
   onAmbientVolumeChange,
+  onExportBackupJson,
+  onImportBackupJson,
+  onExportSnapshot,
   onBackToTitle,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importMode, setImportMode] = useState<BackupImportMode>('merge');
+  const [backupFeedback, setBackupFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const result = onImportBackupJson(text, importMode);
+      setBackupFeedback(result);
+    } catch {
+      setBackupFeedback({ ok: false, message: 'Unable to read the selected file.' });
+    }
+  };
+
   return (
     <div
       role="dialog"
@@ -171,6 +201,119 @@ export const PauseModal: React.FC<PauseModalProps> = ({
               aria-label="Ambient soundscape volume"
               className="kubi-slider w-full mt-2.5"
             />
+          )}
+        </div>
+
+        {/* Local Storage Progress Backup (JSON Export / Import) */}
+        <div className="mb-5 pt-3 border-t" style={{ borderColor: theme.ui.border }}>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-xs font-medium inline-flex items-center gap-1.5" style={{ color: theme.ui.muted }}>
+              <HardDrive className="w-3.5 h-3.5" style={{ color: theme.ui.accent }} />
+              Backup &amp; Restore
+            </span>
+            <span className="font-mono-tabular text-[11px]" style={{ color: theme.ui.muted }}>
+              {customThemes.length} themes · {solveCount} solves
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              data-testid="settings-export-json-btn"
+              onClick={() => setBackupFeedback(onExportBackupJson())}
+              className="h-9 px-2.5 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+              style={{
+                backgroundColor: theme.ui.surfaceSubtle,
+                borderColor: theme.ui.border,
+                color: theme.ui.text,
+              }}
+            >
+              <Download className="w-3.5 h-3.5 shrink-0" />
+              <span>Export JSON</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="settings-import-json-btn"
+              onClick={() => fileInputRef.current?.click()}
+              className="h-9 px-2.5 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+              style={{
+                backgroundColor: theme.ui.surfaceSubtle,
+                borderColor: theme.ui.border,
+                color: theme.ui.text,
+              }}
+            >
+              <Upload className="w-3.5 h-3.5 shrink-0" />
+              <span>Import JSON</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            data-testid="settings-export-snapshot-btn"
+            onClick={onExportSnapshot}
+            className="w-full h-9 mt-1.5 px-2.5 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+            style={{
+              backgroundColor: theme.ui.surfaceSubtle,
+              borderColor: theme.ui.border,
+              color: theme.ui.text,
+            }}
+          >
+            <Camera className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
+            <span>Export High-Res Cube PNG</span>
+          </button>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            data-testid="settings-import-json-input"
+            aria-label="Import Kubi Studio backup JSON file"
+            onChange={(e) => void handleFileChange(e)}
+            className="hidden"
+          />
+
+          <div className="flex items-center justify-between gap-2 mt-2 text-[11px]">
+            <span style={{ color: theme.ui.muted }}>Import mode</span>
+            <div
+              className="inline-flex items-center gap-0.5 p-0.5 rounded-lg border"
+              style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surfaceSubtle }}
+            >
+              {(['merge', 'replace'] as const).map((m) => {
+                const active = importMode === m;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    data-testid={`import-mode-${m}`}
+                    aria-pressed={active}
+                    onClick={() => setImportMode(m)}
+                    className="h-6 px-2 rounded-md text-[11px] font-semibold capitalize cursor-pointer"
+                    style={{
+                      backgroundColor: active ? theme.ui.surface : 'transparent',
+                      color: active ? theme.ui.accent : theme.ui.muted,
+                    }}
+                  >
+                    {m}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {backupFeedback && (
+            <p
+              role={backupFeedback.ok ? 'status' : 'alert'}
+              data-testid="settings-backup-feedback"
+              className="mt-2 text-[11px] font-medium leading-snug px-2.5 py-1.5 rounded-lg border"
+              style={{
+                backgroundColor: backupFeedback.ok ? theme.ui.accentSoft : 'rgba(220, 38, 38, 0.08)',
+                borderColor: backupFeedback.ok ? theme.ui.accent : 'rgba(220, 38, 38, 0.35)',
+                color: backupFeedback.ok ? theme.ui.text : '#DC2626',
+              }}
+            >
+              {backupFeedback.message}
+            </p>
           )}
         </div>
 

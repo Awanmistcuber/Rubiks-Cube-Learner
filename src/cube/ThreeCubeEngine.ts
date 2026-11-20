@@ -11,6 +11,7 @@ import {
   isCubeSolved,
   parseNotation,
 } from './cubeLogic';
+import { computeSnapshotDimensions } from './snapshot';
 import { THEMES } from './themes';
 import type {
   Axis,
@@ -1230,6 +1231,54 @@ export class ThreeCubeEngine {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
     this.updateCameraFraming(this.gameState, true);
+  }
+
+  /**
+   * Captures a lossless high-resolution PNG screenshot of the exact current 3D cube state
+   * (stickers, custom/studio theme, lighting, exploded core, and user camera orientation)
+   * without causing any CSS layout shift or visible viewport flicker.
+   */
+  public captureHighResSnapshot(options?: {
+    width?: number;
+    height?: number;
+  }): { dataUrl: string; width: number; height: number } | null {
+    if (this.disposed) return null;
+
+    const prevSize = new THREE.Vector2();
+    this.renderer.getSize(prevSize);
+    const prevWidth = Math.max(prevSize.x || this.container.clientWidth, 1);
+    const prevHeight = Math.max(prevSize.y || this.container.clientHeight, 1);
+    const prevPixelRatio = this.renderer.getPixelRatio();
+    const prevAspect = this.camera.aspect;
+
+    const gl = this.renderer.getContext();
+    const glMaxRb = Number(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE)) || 4096;
+    const maxRenderbufferSize = Math.min(this.renderer.capabilities.maxTextureSize || 4096, glMaxRb);
+    const { width, height } = computeSnapshotDimensions({
+      targetWidth: options?.width,
+      targetHeight: options?.height,
+      maxRenderbufferSize,
+    });
+
+    try {
+      this.controls.update();
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(width, height, false);
+      this.camera.aspect = width / height;
+      this.camera.updateProjectionMatrix();
+      this.renderer.render(this.scene, this.camera);
+
+      const dataUrl = this.renderer.domElement.toDataURL('image/png');
+      return { dataUrl, width, height };
+    } catch {
+      return null;
+    } finally {
+      this.renderer.setPixelRatio(prevPixelRatio);
+      this.renderer.setSize(prevWidth, prevHeight, false);
+      this.camera.aspect = prevAspect;
+      this.camera.updateProjectionMatrix();
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 
   private updateSimulation(dt: number, elapsedSec: number) {
