@@ -596,6 +596,19 @@ export default function App() {
     setSolveRecords((prev) => prev.map((r) => (r.id === id ? { ...r, penalty } : r)));
   }, []);
 
+  const handleUpdateSolveMoves = useCallback((id: string, moves: number | undefined) => {
+    setSolveRecords((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        if (moves === undefined) {
+          const { moves: _removed, ...rest } = r;
+          return rest;
+        }
+        return { ...r, moves };
+      })
+    );
+  }, []);
+
   const handleDeleteSolveRecord = useCallback((id: string) => {
     setSolveRecords((prev) => prev.filter((r) => r.id !== id));
   }, []);
@@ -1126,6 +1139,7 @@ export default function App() {
           onSelectPuzzle={handleSelectPuzzle}
           onAddRecord={handleAddSolveRecord}
           onUpdatePenalty={handleUpdateSolvePenalty}
+          onUpdateMoves={handleUpdateSolveMoves}
           onDeleteRecord={handleDeleteSolveRecord}
           onClearPuzzleRecords={handleClearPuzzleRecords}
           onRestoreDemoRecords={handleRestoreDemoRecords}

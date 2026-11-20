@@ -45,6 +45,33 @@ export interface SessionStats {
   histogram: HistogramBin[];
 }
 
+export interface Last20Point {
+  slotIndex: number;
+  overallSolveNumber: number;
+  effectiveMs: number | null;
+  moves: number | null;
+  tps: number | null;
+  isBestTime: boolean;
+  isFewestMoves: boolean;
+  record: SolveRecord;
+}
+
+export interface Last20Analytics {
+  windowLimit: number;
+  windowCount: number;
+  totalSessionCount: number;
+  validTimeCount: number;
+  solvesWithMovesCount: number;
+  avgTimeMs: number | null;
+  bestTimeMs: number | null;
+  avgMoves: number | null;
+  bestMoves: number | null;
+  avgTps: number | null;
+  timeDeltaMs: number | null;
+  movesDelta: number | null;
+  points: Last20Point[];
+}
+
 export function getEffectiveTimeMs(record: Pick<SolveRecord, 'timeMs' | 'penalty'>): number | null {
   if (record.penalty === 'dnf') return null;
   return record.penalty === '+2' ? record.timeMs + 2000 : record.timeMs;
@@ -254,6 +281,88 @@ export function computeSessionStats(records: SolveRecord[]): SessionStats {
 }
 
 /**
+ * Computes move-count and solve-time progression analytics over the user's most recent N solves (default 20).
+ * Solves are ordered chronologically (oldest -> newest within the rolling window).
+ */
+export function computeLast20Analytics(records: SolveRecord[], limit = 20): Last20Analytics {
+  const safeLimit = Math.max(1, Math.floor(limit));
+  const ordered = [...records].sort((a, b) => a.timestamp - b.timestamp);
+  const startOffset = Math.max(0, ordered.length - safeLimit);
+  const windowed = ordered.slice(startOffset);
+
+  const validTimes: number[] = [];
+  const validMoves: number[] = [];
+  const validTps: number[] = [];
+
+  for (const r of windowed) {
+    const eff = getEffectiveTimeMs(r);
+    const mv =
+      typeof r.moves === 'number' && Number.isFinite(r.moves) && r.moves > 0
+        ? Math.round(r.moves)
+        : null;
+    if (eff !== null) validTimes.push(eff);
+    if (mv !== null) validMoves.push(mv);
+    if (eff !== null && eff > 0 && mv !== null) {
+      validTps.push(mv / (eff / 1000));
+    }
+  }
+
+  const bestTimeMs = validTimes.length > 0 ? Math.min(...validTimes) : null;
+  const bestMoves = validMoves.length > 0 ? Math.min(...validMoves) : null;
+  const avgTimeMs =
+    validTimes.length > 0 ? validTimes.reduce((acc, v) => acc + v, 0) / validTimes.length : null;
+  const avgMoves =
+    validMoves.length > 0 ? validMoves.reduce((acc, v) => acc + v, 0) / validMoves.length : null;
+  const avgTps =
+    validTps.length > 0 ? validTps.reduce((acc, v) => acc + v, 0) / validTps.length : null;
+
+  const computeHalfDelta = (vals: number[]): number | null => {
+    if (vals.length < 4) return null;
+    const mid = Math.floor(vals.length / 2);
+    const first = vals.slice(0, mid);
+    const second = vals.slice(-mid);
+    const meanFirst = first.reduce((a, b) => a + b, 0) / first.length;
+    const meanSecond = second.reduce((a, b) => a + b, 0) / second.length;
+    return meanSecond - meanFirst;
+  };
+
+  const points: Last20Point[] = windowed.map((rec, idx) => {
+    const eff = getEffectiveTimeMs(rec);
+    const mv =
+      typeof rec.moves === 'number' && Number.isFinite(rec.moves) && rec.moves > 0
+        ? Math.round(rec.moves)
+        : null;
+    const tps = eff !== null && eff > 0 && mv !== null ? mv / (eff / 1000) : null;
+    return {
+      slotIndex: idx + 1,
+      overallSolveNumber: startOffset + idx + 1,
+      effectiveMs: eff,
+      moves: mv,
+      tps,
+      isBestTime: eff !== null && bestTimeMs !== null && eff === bestTimeMs,
+      isFewestMoves: mv !== null && bestMoves !== null && mv === bestMoves,
+      record: rec,
+    };
+  });
+
+  return {
+    windowLimit: safeLimit,
+    windowCount: windowed.length,
+    totalSessionCount: ordered.length,
+    validTimeCount: validTimes.length,
+    solvesWithMovesCount: validMoves.length,
+    avgTimeMs,
+    bestTimeMs,
+    avgMoves,
+    bestMoves,
+    avgTps,
+    timeDeltaMs: computeHalfDelta(validTimes),
+    movesDelta: computeHalfDelta(validMoves),
+    points,
+  };
+}
+
+/**
  * Generates an official-style WCA scramble notation string for any puzzle configuration.
  * Avoids consecutive same-face moves and redundant parallel-axis cancellations (e.g. R L R).
  */
@@ -334,23 +443,42 @@ export function createSeedRecords(): SolveRecord[] {
   const now = Date.now();
   const min = 60_000;
 
-  const entries: { puzzle: PuzzleType; times: number[]; pen?: Record<number, SolvePenalty> }[] = [
+  const entries: {
+    puzzle: PuzzleType;
+    times: number[];
+    moves: number[];
+    pen?: Record<number, SolvePenalty>;
+  }[] = [
     {
       puzzle: '3x3',
-      times: [21840, 19620, 20410, 18290, 17450, 18910, 16820, 15940, 16310, 14860],
-      pen: { 5: '+2' },
+      times: [
+        23480, 22610, 21940, 21250, 20680,
+        21420, 19890, 19340, 20110, 18760,
+        18240, 17850, 18910, 17120, 16640,
+        16980, 15920, 15410, 14860, 14190,
+      ],
+      moves: [
+        65, 63, 62, 60, 59,
+        61, 57, 56, 58, 55,
+        54, 53, 55, 51, 50,
+        52, 49, 48, 47, 45,
+      ],
+      pen: { 12: '+2' },
     },
     {
       puzzle: '2x2',
-      times: [7420, 6810, 6190, 5840, 6320, 5180],
+      times: [7820, 7420, 6810, 6190, 5840, 6320, 5490, 5180],
+      moves: [23, 22, 20, 19, 18, 19, 17, 16],
     },
     {
       puzzle: '4x4',
-      times: [78400, 74210, 71890, 68540, 65120],
+      times: [81200, 78400, 74210, 71890, 68540, 65120],
+      moves: [148, 142, 136, 132, 127, 121],
     },
     {
       puzzle: 'mirror',
-      times: [49200, 44810, 41950, 38640],
+      times: [52400, 49200, 44810, 41950, 38640],
+      moves: [74, 70, 66, 62, 58],
     },
   ];
 
@@ -358,6 +486,7 @@ export function createSeedRecords(): SolveRecord[] {
   let seed = 4201;
 
   for (const group of entries) {
+    const count = group.times.length;
     group.times.forEach((t, idx) => {
       seed += 137;
       records.push({
@@ -366,8 +495,9 @@ export function createSeedRecords(): SolveRecord[] {
         timeMs: t,
         penalty: group.pen?.[idx] ?? 'none',
         scramble: generateWcaScrambleString(group.puzzle, seed),
-        source: 'stopwatch',
-        timestamp: now - (30 - idx * 2) * min - (group.puzzle === '3x3' ? 0 : 120 * min),
+        source: idx % 3 === 0 ? 'virtual3d' : 'stopwatch',
+        moves: group.moves[idx],
+        timestamp: now - (count - idx) * 2 * min - (group.puzzle === '3x3' ? 0 : 120 * min),
       });
     });
   }
@@ -385,7 +515,25 @@ export function loadSolveRecords(): SolveRecord[] {
     }
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return createSeedRecords();
-    return parsed as SolveRecord[];
+    const list = parsed as SolveRecord[];
+
+    // Gracefully enrich legacy seed-* entries that predate move-count tracking
+    const seedById = new Map(createSeedRecords().map((r) => [r.id, r]));
+    let upgraded = false;
+    const enriched = list.map((rec) => {
+      if (rec.moves === undefined && rec.id.startsWith('seed-')) {
+        const seedMatch = seedById.get(rec.id);
+        if (seedMatch?.moves !== undefined) {
+          upgraded = true;
+          return { ...rec, moves: seedMatch.moves };
+        }
+      }
+      return rec;
+    });
+    if (upgraded) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(enriched));
+    }
+    return enriched;
   } catch {
     return createSeedRecords();
   }

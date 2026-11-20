@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  computeLast20Analytics,
   computeSessionStats,
   computeWcaAverage,
+  createSeedRecords,
   exportRecordsToCsv,
   formatPreciseTime,
   generateWcaScrambleString,
@@ -93,4 +95,48 @@ test('exportRecordsToCsv serializes header and rows cleanly', () => {
   const csv = exportRecordsToCsv([makeRec('1', 15230, '+2', 1)]);
   assert.ok(csv.includes('Solve #,Puzzle,Effective Time (s)'));
   assert.ok(csv.includes('1,3x3,17.23,15230,+2'));
+});
+
+test('computeLast20Analytics slices strictly to the latest 20 chronological solves', () => {
+  const recs: SolveRecord[] = Array.from({ length: 25 }, (_, i) => ({
+    ...makeRec(`s-${i + 1}`, 25000 - i * 400, 'none', i + 1),
+    moves: 70 - i,
+  }));
+  const analytics = computeLast20Analytics(recs);
+
+  assert.equal(analytics.totalSessionCount, 25);
+  assert.equal(analytics.windowCount, 20);
+  assert.equal(analytics.points.length, 20);
+  assert.equal(analytics.points[0].overallSolveNumber, 6);
+  assert.equal(analytics.points[19].overallSolveNumber, 25);
+  assert.equal(analytics.bestTimeMs, 25000 - 24 * 400);
+  assert.equal(analytics.bestMoves, 70 - 24);
+  assert.ok(analytics.timeDeltaMs !== null && analytics.timeDeltaMs < 0);
+  assert.ok(analytics.movesDelta !== null && analytics.movesDelta < 0);
+});
+
+test('computeLast20Analytics handles missing move counts, +2 penalties, DNFs, and TPS accurately', () => {
+  const recs: SolveRecord[] = [
+    { ...makeRec('a', 20000, 'none', 1), moves: 60 }, // 20s, 60mv -> 3.0 TPS
+    { ...makeRec('b', 16000, '+2', 2), moves: 54 },   // 18s, 54mv -> 3.0 TPS
+    { ...makeRec('c', 15000, 'none', 3) },            // 15s, no moves
+    { ...makeRec('d', 14000, 'dnf', 4), moves: 50 },  // DNF, 50mv (fewest moves)
+  ];
+  const analytics = computeLast20Analytics(recs);
+
+  assert.equal(analytics.validTimeCount, 3);
+  assert.equal(analytics.solvesWithMovesCount, 3);
+  assert.equal(analytics.bestTimeMs, 15000);
+  assert.equal(analytics.bestMoves, 50);
+  assert.ok(analytics.avgTps !== null && Math.abs(analytics.avgTps - 3.0) < 0.001);
+  assert.equal(analytics.points[2].moves, null);
+  assert.equal(analytics.points[3].effectiveMs, null);
+  assert.equal(analytics.points[3].isFewestMoves, true);
+});
+
+test('createSeedRecords includes 20 3x3 solves with populated move counts', () => {
+  const seeded = createSeedRecords();
+  const threeByThree = seeded.filter((r) => r.puzzleType === '3x3');
+  assert.equal(threeByThree.length, 20);
+  assert.ok(threeByThree.every((r) => typeof r.moves === 'number' && r.moves > 0));
 });

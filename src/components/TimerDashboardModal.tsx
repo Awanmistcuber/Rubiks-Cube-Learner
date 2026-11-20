@@ -9,6 +9,7 @@ import {
   Search,
   Timer,
   Trash2,
+  TrendingUp,
   Trophy,
   Upload,
   X,
@@ -31,6 +32,7 @@ import {
   type DailyLeaderboardEntry,
 } from '../cube/dailyChallenge';
 import {
+  computeLast20Analytics,
   computeSessionStats,
   exportRecordsToCsv,
   formatPreciseTime,
@@ -42,12 +44,13 @@ import {
 import type { PuzzleType, ThemePalette } from '../cube/types';
 import {
   DistributionHistogramChart,
+  Last20MoveTimeChart,
   PuzzleComparisonChart,
   SolveProgressionChart,
 } from './AnalyticsCharts';
 import { DailyChallengeEntryCard, DailyChallengePanel } from './DailyChallengePanel';
 
-export type TimerDashboardTab = 'stopwatch' | 'dashboard' | 'daily';
+export type TimerDashboardTab = 'stopwatch' | 'dashboard' | 'analytics' | 'daily';
 
 interface TimerDashboardModalProps {
   theme: ThemePalette;
@@ -59,6 +62,7 @@ interface TimerDashboardModalProps {
   onSelectPuzzle: (p: PuzzleType) => void;
   onAddRecord: (rec: SolveRecord) => void;
   onUpdatePenalty: (id: string, penalty: SolvePenalty) => void;
+  onUpdateMoves?: (id: string, moves: number | undefined) => void;
   onDeleteRecord: (id: string) => void;
   onClearPuzzleRecords: (puzzle: PuzzleType) => void;
   onRestoreDemoRecords: () => void;
@@ -82,6 +86,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
   onSelectPuzzle,
   onAddRecord,
   onUpdatePenalty,
+  onUpdateMoves,
   onDeleteRecord,
   onClearPuzzleRecords,
   onRestoreDemoRecords,
@@ -314,6 +319,10 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
   );
 
   const stats = useMemo(() => computeSessionStats(puzzleRecords), [puzzleRecords]);
+  const last20Analytics = useMemo(
+    () => computeLast20Analytics(puzzleRecords, 20),
+    [puzzleRecords]
+  );
 
   const allPuzzleComparison = useMemo(
     () =>
@@ -536,11 +545,11 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
           className="px-3 sm:px-5 py-2.5 sm:py-3 border-b flex flex-wrap items-center justify-between gap-2 sm:gap-2.5 shrink-0"
           style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surfaceSubtle }}
         >
-          {/* Left: View Switcher */}
+          {/* Left: View Switcher (fits cleanly on 360px mobile through 1440px desktop) */}
           <div
             role="tablist"
             aria-label="Timing workspace views"
-            className="order-1 flex items-center gap-0.5 sm:gap-1 p-1 rounded-xl border min-w-0"
+            className="order-1 flex items-center gap-0.5 sm:gap-1 p-1 rounded-xl border min-w-0 max-w-[calc(100%-46px)] sm:max-w-none overflow-x-auto kubi-scroll-x"
             style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surface }}
           >
             <button
@@ -548,30 +557,46 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
               role="tab"
               aria-selected={viewTab === 'stopwatch'}
               onClick={() => setViewTab('stopwatch')}
-              className="h-9 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-2 sm:px-3 rounded-lg text-[11px] sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
               style={{
                 backgroundColor: viewTab === 'stopwatch' ? theme.ui.accent : 'transparent',
                 color: viewTab === 'stopwatch' ? theme.ui.accentFg : theme.ui.muted,
               }}
             >
-              <Timer className="w-4 h-4 shrink-0" />
-              <span className="max-[370px]:hidden">Stopwatch</span>
-              <span className="hidden max-[370px]:inline">Timer</span>
+              <Timer className="hidden sm:block w-4 h-4 shrink-0" />
+              <span className="sm:hidden">Timer</span>
+              <span className="hidden sm:inline">Stopwatch</span>
             </button>
             <button
               type="button"
               role="tab"
               aria-selected={viewTab === 'dashboard'}
               onClick={() => setViewTab('dashboard')}
-              className="h-9 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-2 sm:px-3 rounded-lg text-[11px] sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
               style={{
                 backgroundColor: viewTab === 'dashboard' ? theme.ui.accent : 'transparent',
                 color: viewTab === 'dashboard' ? theme.ui.accentFg : theme.ui.muted,
               }}
             >
-              <BarChart3 className="w-4 h-4 shrink-0" />
+              <BarChart3 className="hidden sm:block w-4 h-4 shrink-0" />
               <span className="sm:hidden">Stats</span>
-              <span className="hidden sm:inline">Dashboard & Graphs</span>
+              <span className="hidden sm:inline xl:hidden">Dashboard</span>
+              <span className="hidden xl:inline">Dashboard &amp; Graphs</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              data-testid="tab-analytics"
+              aria-selected={viewTab === 'analytics'}
+              onClick={() => setViewTab('analytics')}
+              className="h-9 px-2 sm:px-3 rounded-lg text-[11px] sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+              style={{
+                backgroundColor: viewTab === 'analytics' ? theme.ui.accent : 'transparent',
+                color: viewTab === 'analytics' ? theme.ui.accentFg : theme.ui.muted,
+              }}
+            >
+              <TrendingUp className="hidden sm:block w-4 h-4 shrink-0" />
+              <span>Analytics</span>
             </button>
             <button
               type="button"
@@ -579,15 +604,16 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
               data-testid="tab-daily-challenge"
               aria-selected={viewTab === 'daily'}
               onClick={() => setViewTab('daily')}
-              className="h-9 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-2 sm:px-3 rounded-lg text-[11px] sm:text-sm font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
               style={{
                 backgroundColor: viewTab === 'daily' ? theme.ui.accent : 'transparent',
                 color: viewTab === 'daily' ? theme.ui.accentFg : theme.ui.muted,
               }}
             >
-              <Trophy className="w-4 h-4 shrink-0" />
+              <Trophy className="hidden sm:block w-4 h-4 shrink-0" />
               <span className="sm:hidden">Daily</span>
-              <span className="hidden sm:inline">Daily Challenge</span>
+              <span className="hidden sm:inline xl:hidden">Daily</span>
+              <span className="hidden xl:inline">Daily Challenge</span>
             </button>
           </div>
 
@@ -1265,7 +1291,249 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
             </div>
           )}
 
-          {/* ==================== VIEW 3: DAILY CHALLENGE & GLOBAL LEADERBOARD ==================== */}
+          {/* ==================== VIEW 3: ANALYTICS (LAST 20 SOLVES — MOVES & TIMES) ==================== */}
+          {viewTab === 'analytics' && (
+            <div className="flex flex-col gap-5" data-testid="analytics-tab-panel">
+              {/* Quiet Scope Header */}
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div>
+                  <h2
+                    className="font-display text-lg sm:text-xl font-bold tracking-tight"
+                    style={{ color: theme.ui.text }}
+                  >
+                    Progress Analytics · {PUZZLE_META[puzzleType].label}
+                  </h2>
+                  <p className="text-xs mt-0.5" style={{ color: theme.ui.muted }}>
+                    Comparing solve speed and move efficiency across your last {last20Analytics.windowCount} of{' '}
+                    {last20Analytics.totalSessionCount}{' '}
+                    {last20Analytics.totalSessionCount === 1 ? 'solve' : 'solves'}
+                  </p>
+                </div>
+                <span className="font-mono-tabular text-xs" style={{ color: theme.ui.muted }}>
+                  Window: Last {last20Analytics.windowLimit} solves · {last20Analytics.solvesWithMovesCount} with moves
+                </span>
+              </div>
+
+              {/* 4-Column Last-20 KPI Summary Strip */}
+              <div
+                className="grid grid-cols-2 lg:grid-cols-4 gap-3"
+                data-testid="analytics-kpi-strip"
+              >
+                {[
+                  {
+                    label: 'Avg Time (Last 20)',
+                    value: formatPreciseTime(last20Analytics.avgTimeMs),
+                    sub:
+                      last20Analytics.timeDeltaMs !== null
+                        ? last20Analytics.timeDeltaMs < 0
+                          ? `-${(Math.abs(last20Analytics.timeDeltaMs) / 1000).toFixed(2)}s faster`
+                          : `+${(last20Analytics.timeDeltaMs / 1000).toFixed(2)}s vs early`
+                        : `Best: ${formatPreciseTime(last20Analytics.bestTimeMs)}`,
+                    accentColor: theme.ui.accent,
+                  },
+                  {
+                    label: 'Avg Move Count',
+                    value:
+                      last20Analytics.avgMoves !== null
+                        ? `${last20Analytics.avgMoves.toFixed(1)}`
+                        : '—',
+                    sub:
+                      last20Analytics.movesDelta !== null
+                        ? last20Analytics.movesDelta < 0
+                          ? `-${Math.abs(last20Analytics.movesDelta).toFixed(1)} fewer moves`
+                          : `+${last20Analytics.movesDelta.toFixed(1)} moves vs early`
+                        : `${last20Analytics.solvesWithMovesCount}/${last20Analytics.windowCount} logged`,
+                    accentColor: theme.isDark ? '#2DD4BF' : '#0D9488',
+                  },
+                  {
+                    label: 'Fewest Moves',
+                    value:
+                      last20Analytics.bestMoves !== null ? `${last20Analytics.bestMoves}` : '—',
+                    sub:
+                      last20Analytics.bestTimeMs !== null
+                        ? `Best time: ${formatPreciseTime(last20Analytics.bestTimeMs)}`
+                        : 'No completed solves yet',
+                    accentColor: theme.ui.text,
+                  },
+                  {
+                    label: 'Turn Speed (TPS)',
+                    value:
+                      last20Analytics.avgTps !== null
+                        ? `${last20Analytics.avgTps.toFixed(2)}`
+                        : '—',
+                    sub:
+                      last20Analytics.avgTps !== null
+                        ? 'Mean turns per second'
+                        : 'Log move counts to compute TPS',
+                    accentColor: theme.ui.text,
+                  },
+                ].map((kpi) => (
+                  <div
+                    key={kpi.label}
+                    className="rounded-xl border p-4"
+                    style={{
+                      backgroundColor: theme.ui.surfaceSubtle,
+                      borderColor: theme.ui.border,
+                    }}
+                  >
+                    <div className="text-xs font-medium" style={{ color: theme.ui.muted }}>
+                      {kpi.label}
+                    </div>
+                    <div
+                      className="font-mono-tabular text-2xl sm:text-3xl font-bold mt-1"
+                      style={{ color: kpi.accentColor }}
+                    >
+                      {kpi.value}
+                    </div>
+                    <div className="text-[11px] mt-1 truncate" style={{ color: theme.ui.muted }}>
+                      {kpi.sub}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Dual-Axis Line Chart: Solve Time & Move Count over Last 20 Solves */}
+              <Last20MoveTimeChart
+                theme={theme}
+                analytics={last20Analytics}
+                puzzleLabel={PUZZLE_META[puzzleType].label}
+                onStartSolve={() => setViewTab('stopwatch')}
+                onRestoreDemo={onRestoreDemoRecords}
+              />
+
+              {/* Compact Last-20 Solve Breakdown Table (with inline move-count editing for physical solves) */}
+              {last20Analytics.points.length > 0 && (
+                <div
+                  className="rounded-xl border overflow-hidden"
+                  style={{ backgroundColor: theme.ui.surfaceSubtle, borderColor: theme.ui.border }}
+                >
+                  <div
+                    className="px-4 py-3 border-b flex flex-wrap items-center justify-between gap-2"
+                    style={{ borderColor: theme.ui.border }}
+                  >
+                    <div>
+                      <h3 className="font-display text-sm font-semibold" style={{ color: theme.ui.text }}>
+                        Last {last20Analytics.points.length} Solves Breakdown
+                      </h3>
+                      <p className="text-xs" style={{ color: theme.ui.muted }}>
+                        Newest solves first · Edit any move count directly to update the line chart live
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto kubi-scroll">
+                    <table className="w-full text-left border-collapse" data-testid="analytics-last20-table">
+                      <thead>
+                        <tr
+                          className="border-b text-[11px] font-semibold"
+                          style={{ borderColor: theme.ui.border, color: theme.ui.muted }}
+                        >
+                          <th className="py-2.5 px-3.5">#</th>
+                          <th className="py-2.5 px-3">Solve Time</th>
+                          <th className="py-2.5 px-3">Move Count</th>
+                          <th className="py-2.5 px-3 hidden sm:table-cell">TPS</th>
+                          <th className="py-2.5 px-3 hidden sm:table-cell">Source</th>
+                          <th className="py-2.5 px-3.5 text-right">Replay</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y" style={{ borderColor: theme.ui.border }}>
+                        {[...last20Analytics.points].reverse().map((pt) => (
+                          <tr key={pt.record.id} className="text-xs" style={{ borderColor: theme.ui.border }}>
+                            <td className="py-2 px-3.5 font-mono-tabular" style={{ color: theme.ui.muted }}>
+                              #{pt.overallSolveNumber}
+                            </td>
+                            <td
+                              className="py-2 px-3 font-mono-tabular font-semibold whitespace-nowrap"
+                              style={{
+                                color:
+                                  pt.record.penalty === 'dnf'
+                                    ? '#DC2626'
+                                    : pt.isBestTime
+                                      ? theme.ui.accent
+                                      : theme.ui.text,
+                              }}
+                            >
+                              {formatRecordTime(pt.record)}
+                              {pt.isBestTime && (
+                                <span className="ml-1.5 text-[10px] font-medium" style={{ color: theme.ui.accent }}>
+                                  Best
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 px-3 font-mono-tabular">
+                              {onUpdateMoves ? (
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={999}
+                                  inputMode="numeric"
+                                  aria-label={`Move count for solve ${pt.overallSolveNumber}`}
+                                  value={pt.moves ?? ''}
+                                  placeholder="—"
+                                  onChange={(e) => {
+                                    const raw = e.target.value.trim();
+                                    if (!raw) {
+                                      onUpdateMoves(pt.record.id, undefined);
+                                      return;
+                                    }
+                                    const parsed = Math.round(Number(raw));
+                                    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 999) {
+                                      onUpdateMoves(pt.record.id, parsed);
+                                    }
+                                  }}
+                                  className="h-7 w-16 px-2 rounded-md border font-mono-tabular text-xs font-semibold outline-none"
+                                  style={{
+                                    backgroundColor: theme.ui.surface,
+                                    borderColor: pt.isFewestMoves
+                                      ? theme.isDark
+                                        ? '#2DD4BF'
+                                        : '#0D9488'
+                                      : theme.ui.border,
+                                    color: theme.ui.text,
+                                  }}
+                                />
+                              ) : (
+                                <span style={{ color: theme.ui.text }}>{pt.moves ?? '—'}</span>
+                              )}
+                            </td>
+                            <td
+                              className="py-2 px-3 hidden sm:table-cell font-mono-tabular"
+                              style={{ color: theme.ui.muted }}
+                            >
+                              {pt.tps !== null ? pt.tps.toFixed(2) : '—'}
+                            </td>
+                            <td
+                              className="py-2 px-3 hidden sm:table-cell whitespace-nowrap"
+                              style={{ color: theme.ui.muted }}
+                            >
+                              {pt.record.source === 'virtual3d' ? '3D Cube' : 'Stopwatch'}
+                            </td>
+                            <td className="py-2 px-3.5 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => onApplyScrambleTo3D(pt.record.puzzleType, pt.record.scramble)}
+                                aria-label={`Apply solve ${pt.overallSolveNumber} scramble to 3D cube`}
+                                className="h-7 px-2.5 rounded border text-[11px] font-medium cursor-pointer"
+                                style={{
+                                  backgroundColor: theme.ui.surface,
+                                  borderColor: theme.ui.border,
+                                  color: theme.ui.text,
+                                }}
+                              >
+                                3D
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ==================== VIEW 4: DAILY CHALLENGE & GLOBAL LEADERBOARD ==================== */}
           {viewTab === 'daily' && (
             <DailyChallengePanel
               theme={theme}
