@@ -246,6 +246,7 @@ export class ThreeCubeEngine {
   private cameraTargetPos = new THREE.Vector3(4.8, 3.8, 5.4);
   private cameraTargetLook = new THREE.Vector3(-1.1, 0, 0);
   private isCameraLerping = true;
+  private hasUserOrbited = false;
 
   // Interaction (swipe-to-turn + multi-touch pinch safety)
   private raycaster = new THREE.Raycaster();
@@ -313,13 +314,18 @@ export class ThreeCubeEngine {
       TWO: THREE.TOUCH.DOLLY_ROTATE,
     };
     this.controls.minDistance = 4.4;
-    this.controls.maxDistance = 16.5;
+    this.controls.maxDistance = 20.5;
     this.controls.enableDamping = !this.isSoftwareGl;
     this.controls.dampingFactor = 0.07;
     this.controls.rotateSpeed = 0.78;
     this.controls.addEventListener('start', () => {
       this.isCameraLerping = false;
+      this.hasUserOrbited = true;
     });
+
+    // WebGL context safety listeners
+    this.renderer.domElement.addEventListener('webglcontextlost', this.handleContextLost, false);
+    this.renderer.domElement.addEventListener('webglcontextrestored', this.handleContextRestored, false);
 
     // 3-Point Studio Lighting Rig
     this.hemiLight = new THREE.HemisphereLight(0xe6effc, 0xd8d3c8, 1.05);
@@ -769,18 +775,20 @@ export class ThreeCubeEngine {
     this.gameState = state;
     this.controls.enabled = state === 'playing';
     if (prev !== state) {
-      this.updateCameraFraming(state, false);
+      if (prev === 'title' || state === 'title') {
+        this.hasUserOrbited = false;
+      }
+      this.updateCameraFraming(state, false, false);
     }
   }
 
-  public updateCameraFraming(state: GameState, immediate = false) {
+  public updateCameraFraming(state: GameState, immediate = false, preserveOrbit = false) {
     const width = Math.max(this.container.clientWidth, 1);
     const height = Math.max(this.container.clientHeight, 1);
-    const aspect = this.camera.aspect || width / height;
+    const aspect = Math.max(this.camera.aspect || width / height, 0.25);
     const isPortrait = aspect < 0.96;
     const isCompactMobilePortrait = aspect < 0.68;
     const isShortLandscape = !isPortrait && height < 520;
-    const explodeZoom = 1 + this.explodeTarget * 0.34;
 
     if (state === 'title') {
       if (isPortrait) {
@@ -797,23 +805,30 @@ export class ThreeCubeEngine {
         this.cameraTargetLook.set(-1.45, -0.08, 0);
       }
     } else {
-      if (isPortrait) {
-        // Vertical FOV is fixed; scale distance inversely by aspect so cube clears mobile & tablet HUDs cleanly
-        const portraitScale =
-          Math.max(isCompactMobilePortrait ? 1.56 : 1.38, 0.98 / Math.max(aspect, 0.42)) * explodeZoom;
-        this.cameraTargetPos.set(4.5 * portraitScale, 3.3 * portraitScale, 5.2 * portraitScale);
-        this.cameraTargetLook.set(0, isCompactMobilePortrait ? -0.78 : -0.66, 0);
-      } else if (isShortLandscape) {
-        // Landscape phone clearance between Top HUD and Bottom Dock
-        const distBoost = 1.52 * explodeZoom;
-        this.cameraTargetPos.set(4.6 * distBoost, 3.45 * distBoost, 5.4 * distBoost);
-        this.cameraTargetLook.set(0, -0.82, 0);
-      } else {
-        // Generous desktop & tablet-landscape clearance between Top HUD and collapsible Bottom Dock
-        const distBoost = 1.32 * explodeZoom;
-        this.cameraTargetPos.set(4.6 * distBoost, 3.45 * distBoost, 5.4 * distBoost);
-        this.cameraTargetLook.set(0, -0.68, 0);
+      // Exact bounding-sphere framing for dedicated non-overlapping 3D stage on every device & aspect ratio.
+      // Accounts for cube corner diagonals (~2.38), 3D guide arrow arc (~2.25), plinth ring, and Exploded View.
+      const halfVFov = THREE.MathUtils.degToRad(this.camera.fov) * 0.5;
+      const halfHFov = Math.atan(Math.tan(halfVFov) * aspect);
+      const explodeFactor = 1 + this.explodeTarget * 0.36;
+      const boundingRadiusV = 2.58 * explodeFactor;
+      const boundingRadiusH = 2.48 * explodeFactor;
+
+      const distV = boundingRadiusV / Math.sin(halfVFov);
+      const distH = boundingRadiusH / Math.sin(halfHFov);
+      const targetDistance = THREE.MathUtils.clamp(Math.max(distV, distH), 7.8, 18.8);
+
+      // Center cleanly on the cube + subtle plinth ring with balanced margins above and below
+      this.cameraTargetLook.set(0, -0.18, 0);
+
+      // Preserve user's current orbit viewing angle on layout resize (e.g., collapsing/expanding side panel)
+      const dir = _v1.set(4.6, 3.45, 5.4).normalize();
+      if (preserveOrbit) {
+        const currentOffset = _v2.copy(this.camera.position).sub(this.controls.target);
+        if (currentOffset.lengthSq() > 0.01) {
+          dir.copy(currentOffset).normalize();
+        }
       }
+      this.cameraTargetPos.copy(this.cameraTargetLook).addScaledVector(dir, targetDistance);
     }
 
     if (immediate) {
@@ -827,13 +842,14 @@ export class ThreeCubeEngine {
   }
 
   public resetCamera() {
-    this.updateCameraFraming(this.gameState, false);
+    this.hasUserOrbited = false;
+    this.updateCameraFraming(this.gameState, false, false);
   }
 
   public setExplodeAmount(amount: number) {
     this.explodeTarget = THREE.MathUtils.clamp(amount, 0, 1);
     if (this.gameState === 'playing') {
-      this.updateCameraFraming('playing', false);
+      this.updateCameraFraming('playing', false, true);
     }
   }
 
@@ -1261,6 +1277,19 @@ export class ThreeCubeEngine {
 
   private cleanupPointers: () => void = () => {};
 
+  private handleContextLost = (e: Event) => {
+    e.preventDefault();
+    cancelAnimationFrame(this.frameId);
+    clearTimeout(this.frameId);
+  };
+
+  private handleContextRestored = () => {
+    if (this.disposed) return;
+    this.handleResize();
+    this.lastTime = performance.now();
+    this.scheduleNextFrame();
+  };
+
   private handleResize() {
     if (this.disposed) return;
     const width = Math.max(this.container.clientWidth, 1);
@@ -1268,7 +1297,8 @@ export class ThreeCubeEngine {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
-    this.updateCameraFraming(this.gameState, true);
+    const inActiveStudio = this.gameState !== 'title';
+    this.updateCameraFraming(this.gameState, !inActiveStudio, inActiveStudio && this.hasUserOrbited);
   }
 
   /**
@@ -1523,6 +1553,8 @@ export class ThreeCubeEngine {
     clearTimeout(this.frameId);
     this.resizeObserver.disconnect();
     this.cleanupPointers();
+    this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost, false);
+    this.renderer.domElement.removeEventListener('webglcontextrestored', this.handleContextRestored, false);
     this.controls.dispose();
     this.clearCubeMeshes();
     this.clearGuideArrow();

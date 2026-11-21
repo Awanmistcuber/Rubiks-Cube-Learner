@@ -45,7 +45,7 @@ export const ShortcutsHelpOverlay: React.FC<ShortcutsHelpOverlayProps> = ({
       role="region"
       aria-label="Keyboard shortcuts reference"
       data-testid="shortcuts-help-overlay"
-      className="fixed top-[60px] sm:top-[72px] right-2 sm:right-5 z-30 w-[calc(100vw-16px)] max-w-[316px] max-h-[calc(100dvh-160px)] overflow-y-auto kubi-scroll rounded-2xl border p-3.5 animate-kubi-enter"
+      className="absolute top-2.5 right-2.5 z-30 w-[min(316px,calc(100%-20px))] max-h-[calc(100%-20px)] overflow-y-auto kubi-scroll rounded-2xl border p-3.5 animate-kubi-enter"
       style={{
         backgroundColor: theme.ui.surface,
         borderColor: theme.ui.border,

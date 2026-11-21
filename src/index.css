@@ -50,19 +50,75 @@ body,
 }
 
 .kubi-safe-top {
-  padding-top: max(0.625rem, env(safe-area-inset-top));
+  padding-top: max(0.375rem, env(safe-area-inset-top));
 }
 
 .kubi-safe-bottom {
-  padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+  padding-bottom: max(0.375rem, env(safe-area-inset-bottom));
 }
 
 @media (min-width: 640px) {
   .kubi-safe-top {
-    padding-top: max(1.25rem, env(safe-area-inset-top));
+    padding-top: max(0.5rem, env(safe-area-inset-top));
   }
   .kubi-safe-bottom {
-    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Non-overlapping Responsive Studio Workspace:
+   - Mobile portrait & narrow tablet: dedicated unobstructed top 3D stage + compact bottom drawer
+   - Desktop (>=1024px) & short mobile landscape: side-by-side 3D stage (left) + studio panel (right) */
+.kubi-studio-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.kubi-studio-panel {
+  flex-shrink: 0;
+  width: 100%;
+  max-height: 46dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top-width: 1px;
+  border-left-width: 0px;
+}
+
+@media (min-width: 640px) and (max-width: 1023px) and (min-height: 521px) {
+  .kubi-studio-panel {
+    max-height: 41dvh;
+  }
+}
+
+@media (min-width: 1024px), (min-width: 640px) and (max-height: 520px) {
+  .kubi-studio-workspace {
+    flex-direction: row;
+  }
+
+  .kubi-studio-panel {
+    width: 392px;
+    height: 100%;
+    max-height: 100%;
+    border-top-width: 0px;
+    border-left-width: 1px;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) and (max-height: 520px) {
+  .kubi-studio-panel {
+    width: 332px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .kubi-studio-panel {
+    width: 424px;
   }
 }
 

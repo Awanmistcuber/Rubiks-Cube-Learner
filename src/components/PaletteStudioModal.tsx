@@ -171,22 +171,18 @@ export const PaletteStudioModal: React.FC<PaletteStudioModalProps> = ({
   const ui = previewPalette.ui;
 
   return (
-    <div
-      className="fixed inset-0 z-40 pointer-events-none flex items-end md:items-stretch justify-end px-2.5 md:px-5 kubi-safe-bottom md:pt-[78px] md:pb-4"
+    <aside
+      role="dialog"
+      aria-modal="false"
+      aria-label="Figma-Inspired Cube Sticker Palette Studio"
+      data-testid="palette-studio-drawer"
       aria-live="polite"
+      className="kubi-studio-panel z-20 animate-kubi-enter"
+      style={{
+        backgroundColor: ui.surface,
+        borderColor: ui.border,
+      }}
     >
-      <aside
-        role="dialog"
-        aria-modal="false"
-        aria-label="Figma-Inspired Cube Sticker Palette Studio"
-        data-testid="palette-studio-drawer"
-        className="pointer-events-auto w-full md:w-[376px] lg:w-[404px] max-h-[58dvh] md:max-h-full rounded-2xl border flex flex-col overflow-hidden animate-kubi-enter"
-        style={{
-          backgroundColor: ui.surface,
-          borderColor: ui.border,
-          boxShadow: ui.shadow,
-        }}
-      >
         {/* Header */}
         <div
           className="px-4 py-3 border-b flex items-center justify-between gap-2 shrink-0"
@@ -570,6 +566,5 @@ export const PaletteStudioModal: React.FC<PaletteStudioModalProps> = ({
           )}
         </form>
       </aside>
-    </div>
   );
 };

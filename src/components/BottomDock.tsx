@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   CloudRain,
   Compass,
   Gamepad2,
@@ -14,6 +13,7 @@ import {
   Loader2,
   Music,
   Palette,
+  PanelRightClose,
   Pause,
   Play,
   RefreshCw,
@@ -306,229 +306,225 @@ export const BottomDock: React.FC<BottomDockProps> = ({
     }
   };
 
+  if (collapsed) return null;
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none flex flex-col items-center px-2.5 sm:px-4 kubi-safe-bottom">
-      {/* Collapse / Expand Handle */}
-      <button
-        type="button"
-        tabIndex={-1}
-        onClick={(e) => {
-          e.currentTarget.blur();
-          onToggleCollapse();
-        }}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? 'Expand control dock' : 'Collapse control dock'}
-        className="pointer-events-auto mb-1.5 h-8 px-3.5 rounded-t-xl rounded-b-lg border text-xs font-medium flex items-center gap-1.5 transition-transform duration-150 hover:brightness-95 cursor-pointer"
-        style={{
-          backgroundColor: theme.ui.surface,
-          borderColor: theme.ui.border,
-          color: theme.ui.muted,
-          boxShadow: theme.ui.shadow,
-        }}
+    <aside
+      data-testid="studio-control-panel"
+      aria-label="Studio controls panel"
+      className="kubi-studio-panel z-20"
+      style={{
+        backgroundColor: theme.ui.surface,
+        borderColor: theme.ui.border,
+      }}
+    >
+      {/* Sticky Panel Header Tabs + Collapse Button */}
+      <div
+        className="shrink-0 flex items-center justify-between gap-1.5 px-2.5 py-1.5 sm:py-2 border-b"
+        style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surfaceSubtle }}
       >
-        {collapsed ? (
-          <>
-            <ChevronUp className="w-3.5 h-3.5" />
-            <span>Show Controls</span>
-          </>
-        ) : (
-          <>
-            <ChevronDown className="w-3.5 h-3.5" />
-            <span>Hide Controls</span>
-          </>
-        )}
-      </button>
-
-      {/* Unified Collapsible Bottom Control Dock */}
-      {!collapsed && (
         <div
-          className="pointer-events-auto w-full max-w-[820px] rounded-2xl border overflow-hidden animate-kubi-enter"
-          style={{
-            backgroundColor: theme.ui.surface,
-            borderColor: theme.ui.border,
-            boxShadow: theme.ui.shadow,
-          }}
+          className="flex items-center gap-0.5 flex-1 min-w-0"
+          role="tablist"
+          aria-label="Studio modes"
         >
-          {/* Dock Header Tabs */}
-          <div
-            className="flex items-center justify-between gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 border-b"
-            style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surfaceSubtle }}
-          >
-            <div className="flex items-center gap-0.5 sm:gap-1 w-full sm:w-auto justify-between sm:justify-start" role="tablist" aria-label="Studio modes">
-              {(
-                [
-                  { id: 'play', label: 'Play & Solve', shortLabel: 'Play', icon: Gamepad2 },
-                  { id: 'learn', label: 'Learn', shortLabel: 'Learn', icon: BookOpen },
-                  { id: 'lab', label: 'Lab & Themes', shortLabel: 'Lab', icon: SlidersHorizontal },
-                  { id: 'coach', label: 'Solve Coach', shortLabel: 'Coach', icon: Sparkles },
-                ] as const
-              ).map(({ id, label, shortLabel, icon: Icon }) => {
-                const active = activeTab === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => onSetTab(id)}
-                    className="h-9 px-2.5 sm:px-3 rounded-lg text-xs sm:text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer flex-1 sm:flex-initial"
-                    style={{
-                      backgroundColor: active ? theme.ui.surface : 'transparent',
-                      color: active ? theme.ui.text : theme.ui.muted,
-                      boxShadow: active ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
-                    }}
-                  >
-                    <Icon className="w-3.5 h-3.5 shrink-0" />
-                    <span className="sm:hidden">{shortLabel}</span>
-                    <span className="hidden sm:inline">{label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {hintMove && (
-              <div
-                className="hidden sm:flex items-center gap-1.5 text-xs pr-1 shrink-0"
-                data-testid="next-guide-move"
+          {(
+            [
+              { id: 'play', label: 'Play', icon: Gamepad2 },
+              { id: 'learn', label: 'Learn', icon: BookOpen },
+              { id: 'lab', label: 'Lab', icon: SlidersHorizontal },
+              { id: 'coach', label: 'Coach', icon: Sparkles },
+            ] as const
+          ).map(({ id, label, icon: Icon }) => {
+            const active = activeTab === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => onSetTab(id)}
+                className="h-8 sm:h-9 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors duration-150 whitespace-nowrap cursor-pointer flex-1 min-w-0"
+                style={{
+                  backgroundColor: active ? theme.ui.surface : 'transparent',
+                  color: active ? theme.ui.text : theme.ui.muted,
+                  boxShadow: active ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                }}
               >
-                <Compass className="w-3.5 h-3.5" style={{ color: theme.ui.accent }} />
-                <span style={{ color: theme.ui.muted }}>Next</span>
-                <span
-                  className="font-mono-tabular font-semibold"
-                  style={{ color: theme.ui.accent }}
+                <Icon className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          {hintMove && (
+            <div
+              className="hidden sm:flex items-center gap-1 px-2 h-8 rounded-lg border text-[11px]"
+              data-testid="next-guide-move"
+              style={{
+                backgroundColor: theme.ui.surface,
+                borderColor: theme.ui.border,
+              }}
+            >
+              <Compass className="w-3 h-3 shrink-0" style={{ color: theme.ui.accent }} />
+              <span
+                className="font-mono-tabular font-semibold"
+                style={{ color: theme.ui.accent }}
+              >
+                {hintMove.notation}
+              </span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="panel-collapse-btn"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onToggleCollapse();
+            }}
+            aria-expanded={!collapsed}
+            aria-label="Hide controls panel"
+            title="Hide controls (H)"
+            className="h-8 w-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer shrink-0"
+            style={{
+              backgroundColor: theme.ui.surface,
+              borderColor: theme.ui.border,
+              color: theme.ui.muted,
+            }}
+          >
+            <ChevronDown className="w-4 h-4 lg:hidden" />
+            <PanelRightClose className="w-3.5 h-3.5 hidden lg:block" />
+          </button>
+        </div>
+      </div>
+
+      {/* Independent Scrollable Panel Content */}
+      <div className="flex-1 min-h-0 overflow-y-auto kubi-scroll p-2.5 sm:p-3.5 kubi-safe-bottom">
+        {/* 1. PLAY & SOLVE TAB */}
+        {activeTab === 'play' && (
+          <div className="flex flex-col gap-3">
+            {/* Primary Solving Action Row — Clean responsive layout for side panel & mobile drawer */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={onScramble}
+                className="h-9 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-transform duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                style={{
+                  backgroundColor: theme.ui.accent,
+                  color: theme.ui.accentFg,
+                }}
+              >
+                <Shuffle className="w-3.5 h-3.5 shrink-0" />
+                <span>Scramble</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isBusy || isSolved}
+                onClick={onHint}
+                aria-label="Step Hint"
+                title="Show 3D guide arrow for next move"
+                className="h-9 px-2.5 rounded-xl text-xs font-medium border flex items-center justify-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                style={{
+                  backgroundColor: theme.ui.surfaceSubtle,
+                  borderColor: theme.ui.border,
+                  color: theme.ui.text,
+                }}
+              >
+                <Compass className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
+                <span>Hint</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="play-step-move-btn"
+                disabled={isBusy || isSolved}
+                onClick={onStepSolveMove}
+                aria-label="Step next move"
+                title="Execute one move of the selected solving method"
+                className="h-9 px-2.5 rounded-xl text-xs font-medium border flex items-center justify-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                style={{
+                  backgroundColor: theme.ui.surfaceSubtle,
+                  borderColor: theme.ui.border,
+                  color: theme.ui.text,
+                }}
+              >
+                <StepForward className="w-3.5 h-3.5 shrink-0" />
+                <span>Step</span>
+              </button>
+
+              {isAutoSolving ? (
+                <button
+                  type="button"
+                  data-testid="play-pause-solve-btn"
+                  onClick={onPauseAutoSolve}
+                  className="h-9 px-2.5 rounded-xl text-xs font-semibold border flex items-center gap-1 transition-colors duration-150 cursor-pointer whitespace-nowrap"
+                  style={{
+                    backgroundColor: theme.ui.accentSoft,
+                    borderColor: theme.ui.accent,
+                    color: theme.ui.accent,
+                  }}
                 >
-                  {hintMove.notation}
-                </span>
+                  <Pause className="w-3.5 h-3.5 shrink-0" />
+                  <span>Pause</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="play-auto-solve-btn"
+                  disabled={isBusy || isSolved}
+                  onClick={onAutoSolve}
+                  className="h-9 px-2.5 rounded-xl text-xs font-medium border flex items-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                  style={{
+                    backgroundColor: theme.ui.surfaceSubtle,
+                    borderColor: theme.ui.border,
+                    color: theme.ui.text,
+                  }}
+                >
+                  <Wand2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Auto-Solve</span>
+                </button>
+              )}
+
+              <div className="flex items-center gap-1 ml-auto">
+                <button
+                  type="button"
+                  disabled={isBusy || !canUndo}
+                  onClick={onUndo}
+                  aria-label="Undo last move"
+                  title="Undo (Ctrl+Z)"
+                  className="h-9 w-9 rounded-xl border flex items-center justify-center disabled:opacity-40 cursor-pointer shrink-0"
+                  style={{
+                    backgroundColor: theme.ui.surfaceSubtle,
+                    borderColor: theme.ui.border,
+                    color: theme.ui.text,
+                  }}
+                >
+                  <Undo2 className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isBusy && !isAutoSolving}
+                  onClick={onResetCube}
+                  aria-label="Reset cube to solved state"
+                  title="Reset cube"
+                  className="h-9 w-9 rounded-xl border flex items-center justify-center disabled:opacity-40 cursor-pointer shrink-0"
+                  style={{
+                    backgroundColor: theme.ui.surfaceSubtle,
+                    borderColor: theme.ui.border,
+                    color: theme.ui.muted,
+                  }}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
               </div>
-            )}
-          </div>
-
-          {/* Tab Panel Content — bounded height ensures landscape phones & small mobiles never clip TopHud */}
-          <div className="p-2.5 sm:p-4 max-h-[54dvh] sm:max-h-[48dvh] overflow-y-auto kubi-scroll">
-            {/* 1. PLAY & SOLVE TAB */}
-            {activeTab === 'play' && (
-              <div className="flex flex-col gap-2.5">
-                {/* Action Row — Single clean horizontal strip on desktop, tablet, and compact 360px phones */}
-                <div className="flex items-center justify-between gap-1 sm:gap-2">
-                  <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
-                    <button
-                      type="button"
-                      disabled={isBusy}
-                      onClick={onScramble}
-                      className="h-9 sm:h-10 px-2 sm:px-3.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1 sm:gap-1.5 transition-transform duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
-                      style={{
-                        backgroundColor: theme.ui.accent,
-                        color: theme.ui.accentFg,
-                      }}
-                    >
-                      <Shuffle className="w-3.5 h-3.5 shrink-0" />
-                      <span>Scramble</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isBusy || isSolved}
-                      onClick={onHint}
-                      aria-label="Step Hint"
-                      title="Show 3D guide arrow for next move"
-                      className="h-9 sm:h-10 w-9 sm:w-auto sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1 sm:gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap shrink-0"
-                      style={{
-                        backgroundColor: theme.ui.surfaceSubtle,
-                        borderColor: theme.ui.border,
-                        color: theme.ui.text,
-                      }}
-                    >
-                      <Compass className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
-                      <span className="hidden sm:inline">Step Hint</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      data-testid="play-step-move-btn"
-                      disabled={isBusy || isSolved}
-                      onClick={onStepSolveMove}
-                      aria-label="Step next move"
-                      title="Execute one move of the selected solving method"
-                      className="h-9 sm:h-10 w-9 sm:w-auto sm:px-2.5 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap shrink-0"
-                      style={{
-                        backgroundColor: theme.ui.surfaceSubtle,
-                        borderColor: theme.ui.border,
-                        color: theme.ui.text,
-                      }}
-                    >
-                      <StepForward className="w-3.5 h-3.5 shrink-0" />
-                      <span className="hidden sm:inline">Step</span>
-                    </button>
-
-                    {isAutoSolving ? (
-                      <button
-                        type="button"
-                        data-testid="play-pause-solve-btn"
-                        onClick={onPauseAutoSolve}
-                        className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-semibold border flex items-center gap-1 sm:gap-1.5 transition-colors duration-150 cursor-pointer whitespace-nowrap shrink-0"
-                        style={{
-                          backgroundColor: theme.ui.accentSoft,
-                          borderColor: theme.ui.accent,
-                          color: theme.ui.accent,
-                        }}
-                      >
-                        <Pause className="w-3.5 h-3.5 shrink-0" />
-                        <span>Pause</span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        data-testid="play-auto-solve-btn"
-                        disabled={isBusy || isSolved}
-                        onClick={onAutoSolve}
-                        className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center gap-1 sm:gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap shrink-0"
-                        style={{
-                          backgroundColor: theme.ui.surfaceSubtle,
-                          borderColor: theme.ui.border,
-                          color: theme.ui.text,
-                        }}
-                      >
-                        <Wand2 className="w-3.5 h-3.5 shrink-0" />
-                        <span className="sm:hidden">Solve</span>
-                        <span className="hidden sm:inline">Auto-Solve</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      disabled={isBusy || !canUndo}
-                      onClick={onUndo}
-                      aria-label="Undo last move"
-                      className="h-9 sm:h-10 w-8 sm:w-auto sm:px-2.5 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap shrink-0"
-                      style={{
-                        backgroundColor: theme.ui.surfaceSubtle,
-                        borderColor: theme.ui.border,
-                        color: theme.ui.text,
-                      }}
-                    >
-                      <Undo2 className="w-3.5 h-3.5" />
-                      <span className="hidden md:inline">Undo</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isBusy && !isAutoSolving}
-                      onClick={onResetCube}
-                      aria-label="Reset cube to solved state"
-                      className="h-9 sm:h-10 w-8 sm:w-auto sm:px-2.5 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap shrink-0"
-                      style={{
-                        backgroundColor: theme.ui.surfaceSubtle,
-                        borderColor: theme.ui.border,
-                        color: theme.ui.muted,
-                      }}
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      <span className="hidden md:inline">Reset</span>
-                    </button>
-                  </div>
-                </div>
+            </div>
 
                 {/* Multi-Method Solver Selector & Live Stage Flow Stepper */}
                 <div
@@ -894,8 +890,29 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                 </div>
 
                 {/* Touch-Friendly WCA Face, Center Slice (M/E/S) & Cube Rotation (x/y/z) Pad */}
-                <div className="flex items-center justify-between gap-1.5 sm:gap-2 pt-2 border-t" style={{ borderColor: theme.ui.border }}>
-                  <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto kubi-scroll-x py-0.5 flex-1">
+                <div className="flex flex-col gap-2 pt-2.5 border-t" style={{ borderColor: theme.ui.border }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium" style={{ color: theme.ui.muted }}>
+                      Manual Turns &amp; Rotations
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCounterClockwise((prev) => !prev)}
+                      aria-pressed={counterClockwise}
+                      aria-label="Toggle clockwise or prime direction"
+                      className="h-7 px-2.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                      style={{
+                        backgroundColor: counterClockwise ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
+                        borderColor: counterClockwise ? theme.ui.accent : theme.ui.border,
+                        color: counterClockwise ? theme.ui.accent : theme.ui.muted,
+                      }}
+                    >
+                      {counterClockwise ? "Prime (')" : 'Clockwise'}
+                    </button>
+                  </div>
+
+                  {/* Outer Faces Grid (6 equal buttons) */}
+                  <div className="grid grid-cols-6 gap-1.5">
                     {FACE_KEYS.map((face) => {
                       const notation = counterClockwise ? `${face}'` : face;
                       return (
@@ -906,7 +923,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                           disabled={isBusy}
                           onClick={() => onManualMove(notation)}
                           aria-label={`Turn ${notation} face`}
-                          className="min-w-[38px] sm:min-w-[40px] h-9 sm:h-10 px-1.5 sm:px-2 rounded-lg border font-mono-tabular text-xs sm:text-sm font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+                          className="h-9 rounded-lg border font-mono-tabular text-xs sm:text-sm font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer"
                           style={{
                             backgroundColor: theme.ui.surfaceSubtle,
                             borderColor: theme.ui.border,
@@ -917,14 +934,12 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         </button>
                       );
                     })}
+                  </div>
 
+                  {/* Center Slices (M/E/S) + Cube Rotations (x/y/z) + 4x4 Wide Turns */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     {puzzleType !== '2x2' && (
-                      <>
-                        <span
-                          className="w-px h-6 mx-0.5 shrink-0"
-                          style={{ backgroundColor: theme.ui.border }}
-                          aria-hidden="true"
-                        />
+                      <div className="grid grid-cols-3 gap-1.5 flex-1 min-w-[132px]">
                         {SLICE_KEYS.map((slice) => {
                           const notation = counterClockwise ? `${slice}'` : slice;
                           return (
@@ -936,7 +951,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                               onClick={() => onManualMove(notation)}
                               aria-label={`Turn ${notation} center slice`}
                               title={`Center slice ${notation} (${slice})`}
-                              className="min-w-[38px] sm:min-w-[40px] h-9 sm:h-10 px-1.5 sm:px-2 rounded-lg border font-mono-tabular text-xs sm:text-sm font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+                              className="h-8 rounded-lg border font-mono-tabular text-xs font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer"
                               style={{
                                 backgroundColor: theme.ui.surfaceSubtle,
                                 borderColor: theme.ui.border,
@@ -947,44 +962,36 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                             </button>
                           );
                         })}
-                      </>
+                      </div>
                     )}
 
-                    <span
-                      className="w-px h-6 mx-0.5 shrink-0"
-                      style={{ backgroundColor: theme.ui.border }}
-                      aria-hidden="true"
-                    />
-                    {ROTATION_KEYS.map((rot) => {
-                      const notation = counterClockwise ? `${rot}'` : rot;
-                      return (
-                        <button
-                          key={rot}
-                          type="button"
-                          data-testid={`move-btn-${rot}`}
-                          disabled={isBusy}
-                          onClick={() => onManualMove(notation)}
-                          aria-label={`Rotate whole cube ${notation}`}
-                          title={`Whole-cube rotation ${notation} (${rot.toUpperCase()})`}
-                          className="min-w-[38px] sm:min-w-[40px] h-9 sm:h-10 px-1.5 sm:px-2 rounded-lg border font-mono-tabular text-xs sm:text-sm font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
-                          style={{
-                            backgroundColor: theme.ui.surfaceSubtle,
-                            borderColor: theme.ui.border,
-                            color: theme.ui.muted,
-                          }}
-                        >
-                          {notation}
-                        </button>
-                      );
-                    })}
+                    <div className="grid grid-cols-3 gap-1.5 flex-1 min-w-[132px]">
+                      {ROTATION_KEYS.map((rot) => {
+                        const notation = counterClockwise ? `${rot}'` : rot;
+                        return (
+                          <button
+                            key={rot}
+                            type="button"
+                            data-testid={`move-btn-${rot}`}
+                            disabled={isBusy}
+                            onClick={() => onManualMove(notation)}
+                            aria-label={`Rotate whole cube ${notation}`}
+                            title={`Whole-cube rotation ${notation} (${rot.toUpperCase()})`}
+                            className="h-8 rounded-lg border font-mono-tabular text-xs font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer"
+                            style={{
+                              backgroundColor: theme.ui.surfaceSubtle,
+                              borderColor: theme.ui.border,
+                              color: theme.ui.muted,
+                            }}
+                          >
+                            {notation}
+                          </button>
+                        );
+                      })}
+                    </div>
 
                     {puzzleType === '4x4' && (
-                      <>
-                        <span
-                          className="w-px h-6 mx-0.5 shrink-0"
-                          style={{ backgroundColor: theme.ui.border }}
-                          aria-hidden="true"
-                        />
+                      <div className="grid grid-cols-2 gap-1.5 shrink-0">
                         {(['Rw', 'Uw'] as const).map((wide) => {
                           const notation = counterClockwise ? `${wide}'` : wide;
                           return (
@@ -994,7 +1001,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                               disabled={isBusy}
                               onClick={() => onManualMove(notation)}
                               aria-label={`Turn ${notation} wide layer`}
-                              className="min-w-[42px] h-9 sm:h-10 px-2 rounded-lg border font-mono-tabular text-xs font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+                              className="h-8 px-2.5 rounded-lg border font-mono-tabular text-xs font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer"
                               style={{
                                 backgroundColor: theme.ui.surfaceSubtle,
                                 borderColor: theme.ui.border,
@@ -1005,25 +1012,9 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                             </button>
                           );
                         })}
-                      </>
+                      </div>
                     )}
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setCounterClockwise((prev) => !prev)}
-                    aria-pressed={counterClockwise}
-                    aria-label="Toggle clockwise or prime direction"
-                    className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-lg border text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
-                    style={{
-                      backgroundColor: counterClockwise ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
-                      borderColor: counterClockwise ? theme.ui.accent : theme.ui.border,
-                      color: counterClockwise ? theme.ui.accent : theme.ui.muted,
-                    }}
-                  >
-                    <span className="sm:hidden">{counterClockwise ? "CCW '" : 'CW'}</span>
-                    <span className="hidden sm:inline">{counterClockwise ? "Prime (')" : 'Clockwise'}</span>
-                  </button>
                 </div>
               </div>
             )}
@@ -1099,16 +1090,16 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                 </div>
 
                 {/* Active Lesson Details & Algorithm Strip */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
+                <div className="flex flex-col gap-2.5">
+                  <div className="min-w-0">
+                    <div className="flex items-baseline justify-between gap-2">
                       <h3
                         className="font-display text-sm sm:text-base font-semibold truncate"
                         style={{ color: theme.ui.text }}
                       >
                         {activeLesson.title}
                       </h3>
-                      <span className="text-xs shrink-0" style={{ color: theme.ui.muted }}>
+                      <span className="text-xs font-mono-tabular shrink-0" style={{ color: theme.ui.muted }}>
                         Step {Math.min(lessonStepIndex, activeLesson.algorithm.length)}/{activeLesson.algorithm.length}
                       </span>
                     </div>
@@ -1119,7 +1110,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <button
                       type="button"
                       disabled={isBusy}
@@ -1223,7 +1214,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
             {activeTab === 'lab' && (
               <div className="flex flex-col gap-3.5">
                 {/* Sliders Row: Exploded Core + Turn Speed */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5">
+                <div className="grid grid-cols-1 gap-3">
                   <label className="flex flex-col gap-1.5">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium flex items-center gap-1.5" style={{ color: theme.ui.text }}>
@@ -1269,7 +1260,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                 </div>
 
                 {/* Figma Community & Custom Themes + Ambient Soundscapes */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t" style={{ borderColor: theme.ui.border }}>
+                <div className="grid grid-cols-1 gap-3.5 pt-2.5 border-t" style={{ borderColor: theme.ui.border }}>
                   {/* Studio & Custom Figma Themes */}
                   <div>
                     <div className="flex items-center justify-between gap-1.5 mb-2">
@@ -1522,7 +1513,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
 
                 {coachAnswer && (
                   <div
-                    className="text-xs sm:text-[13px] p-3 rounded-xl border leading-relaxed max-h-32 overflow-y-auto kubi-scroll whitespace-pre-wrap"
+                    className="text-xs sm:text-[13px] p-3 rounded-xl border leading-relaxed max-h-56 overflow-y-auto kubi-scroll whitespace-pre-wrap"
                     style={{
                       backgroundColor: theme.ui.surfaceSubtle,
                       borderColor: theme.ui.border,
@@ -1535,8 +1526,6 @@ export const BottomDock: React.FC<BottomDockProps> = ({
               </div>
             )}
           </div>
-        </div>
-      )}
-    </div>
+    </aside>
   );
 };

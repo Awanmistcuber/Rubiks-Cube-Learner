@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera } from 'lucide-react';
 import { BottomDock } from './components/BottomDock';
+import { CompactNotationBar } from './components/CompactNotationBar';
 import { PauseModal, VictoryModal } from './components/Modals';
 import { PaletteStudioModal } from './components/PaletteStudioModal';
 import { ShortcutsHelpOverlay } from './components/ShortcutsHelpOverlay';
@@ -1412,14 +1413,228 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleManualMove, handleStartStudio, handleToggleMute, handleUndo]);
 
+  const inStudio = gameState !== 'title';
+
   return (
-    <main className="relative w-full h-dvh overflow-hidden" style={{ backgroundColor: theme.ui.bg }}>
-      {/* Isolated Full-Bleed WebGL Canvas Container (never re-rendered by HUD updates) */}
-      <div
-        ref={canvasMountRef}
-        data-testid="cube-viewport"
-        className="kubi-canvas-stage fixed inset-0 w-full h-full z-0"
-      />
+    <main
+      className="relative w-full h-dvh overflow-hidden flex flex-col"
+      style={{ backgroundColor: theme.ui.bg }}
+    >
+      {/* Docked Non-Overlapping Top Studio Header */}
+      {inStudio && (
+        <TopHud
+          theme={theme}
+          puzzleType={puzzleType}
+          moveCount={moveCount}
+          elapsedMs={elapsedMs}
+          isSolved={isSolved}
+          hasScrambled={hasScrambled}
+          activeDailyDateKey={activeDailyDateKey}
+          isMuted={isMuted}
+          dockCollapsed={dockCollapsed}
+          shortcutsOpen={shortcutsOpen}
+          onSelectPuzzle={handleSelectPuzzle}
+          onOpenStopwatch={() => {
+            cubeAudio.playUiTick();
+            setTimerModalTab('stopwatch');
+          }}
+          onOpenDashboard={() => {
+            cubeAudio.playUiTick();
+            setTimerModalTab('dashboard');
+          }}
+          onExportSnapshot={handleExportSnapshot}
+          onResetCamera={() => engineRef.current?.resetCamera()}
+          onToggleMute={handleToggleMute}
+          onToggleDock={() => setDockCollapsed((p) => !p)}
+          onToggleShortcuts={() => {
+            cubeAudio.playUiTick();
+            setShortcutsOpen((p) => !p);
+          }}
+          onPause={() => setGameState('paused')}
+        />
+      )}
+
+      {/* Responsive Non-Overlapping Studio Workspace (Full-bleed on Title Screen, Split/Stacked in Studio) */}
+      <div className={inStudio ? 'kubi-studio-workspace' : 'relative flex-1 min-h-0 w-full flex flex-col'}>
+        {/* Dedicated Unobstructed 3D Cube Stage (Persistent WebGL mount — never unmounted on state/collapse changes) */}
+        <div className="relative flex-1 min-h-0 min-w-0 flex flex-col">
+          <div className="relative flex-1 min-h-0 min-w-0">
+            <div
+              ref={canvasMountRef}
+              data-testid="cube-viewport"
+              className="kubi-canvas-stage absolute inset-0 w-full h-full z-0"
+            />
+
+            {/* Keyboard Shortcuts Reference anchored cleanly inside the 3D Stage */}
+            {inStudio && shortcutsOpen && gameState === 'playing' && !paletteStudioOpen && timerModalTab === null && (
+              <ShortcutsHelpOverlay
+                theme={theme}
+                puzzleType={puzzleType}
+                isBusy={isBusy}
+                onTryMove={handleManualMove}
+                onClose={() => {
+                  cubeAudio.playUiTick();
+                  setShortcutsOpen(false);
+                }}
+              />
+            )}
+
+            {/* Non-intrusive High-Res Snapshot Confirmation Toast centered in 3D Stage */}
+            {snapshotToast && (
+              <div
+                role={snapshotToast.ok ? 'status' : 'alert'}
+                aria-live="polite"
+                data-testid="snapshot-toast"
+                className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 whitespace-nowrap animate-kubi-enter"
+                style={{
+                  backgroundColor: theme.ui.surface,
+                  borderColor: snapshotToast.ok ? theme.ui.accent : 'rgba(220, 38, 38, 0.45)',
+                  color: snapshotToast.ok ? theme.ui.text : '#DC2626',
+                  boxShadow: theme.ui.shadow,
+                }}
+              >
+                <Camera className="w-3.5 h-3.5 shrink-0" style={{ color: snapshotToast.ok ? theme.ui.accent : '#DC2626' }} />
+                <span>{snapshotToast.message}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Compact Live Notation & Active Step Mini-Bar — docked cleanly below the 3D Stage when controls are hidden */}
+          {inStudio && !paletteStudioOpen && dockCollapsed && (
+            <CompactNotationBar
+              theme={theme}
+              puzzleType={puzzleType}
+              activeTab={activeTab}
+              isBusy={isBusy}
+              isAutoSolving={isAutoSolving}
+              isSolved={isSolved}
+              canUndo={historyRef.current.length > 0}
+              hintMove={hintMove}
+              activeMethodPlan={activeMethodPlan}
+              activeLessonId={activeLessonId}
+              lessonTracker={lessonTracker}
+              playTracker={playTracker}
+              playTrackerLabel={playTrackerLabel}
+              onExpandControls={() => setDockCollapsed(false)}
+              onScramble={handleScramble}
+              onHint={handleHint}
+              onUndo={handleUndo}
+              onStepSolveMove={handleStepSolveMove}
+              onAutoSolve={handleAutoSolve}
+              onPauseAutoSolve={handlePauseAutoSolve}
+              onManualMove={handleManualMove}
+              onStageLesson={handleStageLesson}
+              onStepLesson={handleStepLesson}
+            />
+          )}
+        </div>
+
+        {/* Dedicated Non-Overlapping Controls Slot (Right Side Panel on Desktop/Landscape, Bottom Drawer on Mobile Portrait) */}
+        {inStudio && !paletteStudioOpen && !dockCollapsed && (
+          <BottomDock
+            theme={theme}
+            customThemes={customThemes}
+            soundscape={soundscape}
+            ambientVolume={ambientVolume}
+            puzzleType={puzzleType}
+            activeTab={activeTab}
+            collapsed={dockCollapsed}
+            isBusy={isBusy}
+            isAutoSolving={isAutoSolving}
+            isSolved={isSolved}
+            canUndo={historyRef.current.length > 0}
+            hintMove={hintMove}
+            explodeAmount={explodeAmount}
+            turnSpeed={turnSpeed}
+            selectedMethod={selectedMethod}
+            activeMethodPlan={activeMethodPlan}
+            activeLessonId={activeLessonId}
+            lessonTracker={lessonTracker}
+            playTracker={playTracker}
+            playTrackerLabel={playTrackerLabel}
+            hasLastScramble={hasLastScramble}
+            recentNotations={recentNotations}
+            onSetTab={(tab) => {
+              cubeAudio.playUiTick();
+              setActiveTab(tab);
+              activeTabRef.current = tab;
+              if (tab === 'learn') {
+                const lessons = CURRICULUM[puzzleType];
+                const current = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
+                if (isSolved && !hasScrambled) {
+                  handleStageLesson(current);
+                } else {
+                  const nextToken = getNextExpectedToken(lessonTrackerRef.current);
+                  if (nextToken) {
+                    const nextMove = parseNotation(nextToken, puzzleRef.current);
+                    setHintMove(nextMove);
+                    engineRef.current?.showGuideArrow(nextMove);
+                  }
+                }
+              } else if (tab === 'play') {
+                if (playTrackerRef.current.tokens.length > 0) {
+                  const nextToken = getNextExpectedToken(playTrackerRef.current);
+                  const nextMove = nextToken ? parseNotation(nextToken, puzzleRef.current) : null;
+                  setHintMove(nextMove);
+                  if (nextMove) engineRef.current?.showGuideArrow(nextMove);
+                  else engineRef.current?.clearGuideArrow();
+                } else {
+                  setHintMove(null);
+                  engineRef.current?.clearGuideArrow();
+                }
+              }
+            }}
+            onToggleCollapse={() => setDockCollapsed((p) => !p)}
+            onScramble={handleScramble}
+            onUndo={handleUndo}
+            onHint={handleHint}
+            onStepSolveMove={handleStepSolveMove}
+            onAutoSolve={handleAutoSolve}
+            onPauseAutoSolve={handlePauseAutoSolve}
+            onSelectMethod={handleSelectMethod}
+            onReplanMethod={handleReplanMethod}
+            onResetCube={handleResetCube}
+            onManualMove={handleManualMove}
+            onTrackPlaySequence={handleTrackPlaySequence}
+            onPracticeScrambleManually={handlePracticeScrambleManually}
+            onResetPlayTracker={handleResetPlayTracker}
+            onClearPlayTracker={handleClearPlayTracker}
+            onExplodeChange={handleExplodeChange}
+            onSpeedChange={handleSpeedChange}
+            onSelectTheme={handleSelectTheme}
+            onOpenPaletteStudio={() => {
+              cubeAudio.playUiTick();
+              setPaletteStudioOpen(true);
+            }}
+            onExportSnapshot={handleExportSnapshot}
+            onSelectSoundscape={handleSelectSoundscape}
+            onAmbientVolumeChange={handleAmbientVolumeChange}
+            onRunAlgorithm={handleRunAlgorithm}
+            onSelectLesson={handleSelectLesson}
+            onStageLesson={handleStageLesson}
+            onStepLesson={handleStepLesson}
+            onPlayLesson={handlePlayLesson}
+          />
+        )}
+
+        {/* Figma-Inspired Live Cube Sticker Palette Studio — docks cleanly into the side/bottom panel slot */}
+        {inStudio && paletteStudioOpen && (
+          <PaletteStudioModal
+            theme={savedTheme}
+            activeThemeKey={themeKey}
+            customThemes={customThemes}
+            onPreviewPalette={setPreviewPalette}
+            onSaveCustomTheme={handleSaveCustomTheme}
+            onSelectTheme={handleSelectTheme}
+            onDeleteCustomTheme={handleDeleteCustomTheme}
+            onExportSnapshot={handleExportSnapshot}
+            onClose={() => {
+              setPreviewPalette(null);
+              setPaletteStudioOpen(false);
+            }}
+          />
+        )}
+      </div>
 
       {/* Title Screen Overlay */}
       {gameState === 'title' && (
@@ -1430,142 +1645,6 @@ export default function App() {
           onSelectTheme={handleSelectTheme}
           onStart={handleStartStudio}
         />
-      )}
-
-      {/* Active Studio HUD */}
-      {gameState !== 'title' && (
-        <>
-          <TopHud
-            theme={theme}
-            puzzleType={puzzleType}
-            moveCount={moveCount}
-            elapsedMs={elapsedMs}
-            isSolved={isSolved}
-            hasScrambled={hasScrambled}
-            activeDailyDateKey={activeDailyDateKey}
-            isMuted={isMuted}
-            dockCollapsed={dockCollapsed}
-            shortcutsOpen={shortcutsOpen}
-            onSelectPuzzle={handleSelectPuzzle}
-            onOpenStopwatch={() => {
-              cubeAudio.playUiTick();
-              setTimerModalTab('stopwatch');
-            }}
-            onOpenDashboard={() => {
-              cubeAudio.playUiTick();
-              setTimerModalTab('dashboard');
-            }}
-            onExportSnapshot={handleExportSnapshot}
-            onResetCamera={() => engineRef.current?.resetCamera()}
-            onToggleMute={handleToggleMute}
-            onToggleDock={() => setDockCollapsed((p) => !p)}
-            onToggleShortcuts={() => {
-              cubeAudio.playUiTick();
-              setShortcutsOpen((p) => !p);
-            }}
-            onPause={() => setGameState('paused')}
-          />
-
-          {shortcutsOpen && gameState === 'playing' && !paletteStudioOpen && timerModalTab === null && (
-            <ShortcutsHelpOverlay
-              theme={theme}
-              puzzleType={puzzleType}
-              isBusy={isBusy}
-              onTryMove={handleManualMove}
-              onClose={() => {
-                cubeAudio.playUiTick();
-                setShortcutsOpen(false);
-              }}
-            />
-          )}
-
-          {!paletteStudioOpen && (
-            <BottomDock
-              theme={theme}
-              customThemes={customThemes}
-              soundscape={soundscape}
-              ambientVolume={ambientVolume}
-              puzzleType={puzzleType}
-              activeTab={activeTab}
-              collapsed={dockCollapsed}
-              isBusy={isBusy}
-              isAutoSolving={isAutoSolving}
-              isSolved={isSolved}
-              canUndo={historyRef.current.length > 0}
-              hintMove={hintMove}
-              explodeAmount={explodeAmount}
-              turnSpeed={turnSpeed}
-              selectedMethod={selectedMethod}
-              activeMethodPlan={activeMethodPlan}
-              activeLessonId={activeLessonId}
-              lessonTracker={lessonTracker}
-              playTracker={playTracker}
-              playTrackerLabel={playTrackerLabel}
-              hasLastScramble={hasLastScramble}
-              recentNotations={recentNotations}
-              onSetTab={(tab) => {
-                cubeAudio.playUiTick();
-                setActiveTab(tab);
-                activeTabRef.current = tab;
-                if (tab === 'learn') {
-                  const lessons = CURRICULUM[puzzleType];
-                  const current = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
-                  if (isSolved && !hasScrambled) {
-                    handleStageLesson(current);
-                  } else {
-                    const nextToken = getNextExpectedToken(lessonTrackerRef.current);
-                    if (nextToken) {
-                      const nextMove = parseNotation(nextToken, puzzleRef.current);
-                      setHintMove(nextMove);
-                      engineRef.current?.showGuideArrow(nextMove);
-                    }
-                  }
-                } else if (tab === 'play') {
-                  if (playTrackerRef.current.tokens.length > 0) {
-                    const nextToken = getNextExpectedToken(playTrackerRef.current);
-                    const nextMove = nextToken ? parseNotation(nextToken, puzzleRef.current) : null;
-                    setHintMove(nextMove);
-                    if (nextMove) engineRef.current?.showGuideArrow(nextMove);
-                    else engineRef.current?.clearGuideArrow();
-                  } else {
-                    setHintMove(null);
-                    engineRef.current?.clearGuideArrow();
-                  }
-                }
-              }}
-              onToggleCollapse={() => setDockCollapsed((p) => !p)}
-              onScramble={handleScramble}
-              onUndo={handleUndo}
-              onHint={handleHint}
-              onStepSolveMove={handleStepSolveMove}
-              onAutoSolve={handleAutoSolve}
-              onPauseAutoSolve={handlePauseAutoSolve}
-              onSelectMethod={handleSelectMethod}
-              onReplanMethod={handleReplanMethod}
-              onResetCube={handleResetCube}
-              onManualMove={handleManualMove}
-              onTrackPlaySequence={handleTrackPlaySequence}
-              onPracticeScrambleManually={handlePracticeScrambleManually}
-              onResetPlayTracker={handleResetPlayTracker}
-              onClearPlayTracker={handleClearPlayTracker}
-              onExplodeChange={handleExplodeChange}
-              onSpeedChange={handleSpeedChange}
-              onSelectTheme={handleSelectTheme}
-              onOpenPaletteStudio={() => {
-                cubeAudio.playUiTick();
-                setPaletteStudioOpen(true);
-              }}
-              onExportSnapshot={handleExportSnapshot}
-              onSelectSoundscape={handleSelectSoundscape}
-              onAmbientVolumeChange={handleAmbientVolumeChange}
-              onRunAlgorithm={handleRunAlgorithm}
-              onSelectLesson={handleSelectLesson}
-              onStageLesson={handleStageLesson}
-              onStepLesson={handleStepLesson}
-              onPlayLesson={handlePlayLesson}
-            />
-          )}
-        </>
       )}
 
       {/* Pause / Studio Settings Modal */}
@@ -1621,24 +1700,6 @@ export default function App() {
         />
       )}
 
-      {/* Figma-Inspired Live Cube Sticker Palette Studio Drawer */}
-      {paletteStudioOpen && (
-        <PaletteStudioModal
-          theme={savedTheme}
-          activeThemeKey={themeKey}
-          customThemes={customThemes}
-          onPreviewPalette={setPreviewPalette}
-          onSaveCustomTheme={handleSaveCustomTheme}
-          onSelectTheme={handleSelectTheme}
-          onDeleteCustomTheme={handleDeleteCustomTheme}
-          onExportSnapshot={handleExportSnapshot}
-          onClose={() => {
-            setPreviewPalette(null);
-            setPaletteStudioOpen(false);
-          }}
-        />
-      )}
-
       {/* Built-in Speedcube Stopwatch, Analytics Dashboard & Daily Challenge Workspace */}
       {timerModalTab !== null && (
         <TimerDashboardModal
@@ -1660,25 +1721,6 @@ export default function App() {
           onApplyScrambleTo3D={handleApplyScrambleTo3D}
           onPlayDailyIn3D={handlePlayDailyIn3D}
         />
-      )}
-
-      {/* Non-intrusive High-Res Snapshot Confirmation Toast */}
-      {snapshotToast && (
-        <div
-          role={snapshotToast.ok ? 'status' : 'alert'}
-          aria-live="polite"
-          data-testid="snapshot-toast"
-          className="fixed top-[106px] sm:top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 whitespace-nowrap animate-kubi-enter"
-          style={{
-            backgroundColor: theme.ui.surface,
-            borderColor: snapshotToast.ok ? theme.ui.accent : 'rgba(220, 38, 38, 0.45)',
-            color: snapshotToast.ok ? theme.ui.text : '#DC2626',
-            boxShadow: theme.ui.shadow,
-          }}
-        >
-          <Camera className="w-3.5 h-3.5 shrink-0" style={{ color: snapshotToast.ok ? theme.ui.accent : '#DC2626' }} />
-          <span>{snapshotToast.message}</span>
-        </div>
       )}
     </main>
   );
