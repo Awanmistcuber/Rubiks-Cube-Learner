@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   BookOpen,
   Camera,
+  Check,
   ChevronDown,
   ChevronUp,
   CloudRain,
@@ -23,10 +24,12 @@ import {
   VolumeX,
   Wand2,
   Waves,
+  X,
 } from 'lucide-react';
 import { AMBIENT_SOUNDSCAPES } from '../cube/audio';
 import { ALGORITHM_PRESETS, CURRICULUM } from '../cube/curriculum';
 import { buildThemePaletteFromCustom, type CustomThemeRecord } from '../cube/customThemes';
+import type { SequenceTrackerState } from '../cube/sequenceTracker';
 import { THEME_LIST } from '../cube/themes';
 import type {
   AmbientSoundscapeId,
@@ -52,7 +55,10 @@ interface BottomDockProps {
   explodeAmount: number;
   turnSpeed: number;
   activeLessonId: string;
-  lessonStepIndex: number;
+  lessonTracker: SequenceTrackerState;
+  playTracker: SequenceTrackerState;
+  playTrackerLabel: string;
+  hasLastScramble: boolean;
   recentNotations: string[];
   onSetTab: (tab: DockTab) => void;
   onToggleCollapse: () => void;
@@ -62,6 +68,10 @@ interface BottomDockProps {
   onAutoSolve: () => void;
   onResetCube: () => void;
   onManualMove: (notation: string) => void;
+  onTrackPlaySequence: (rawInput: string) => { ok: boolean; message?: string };
+  onPracticeScrambleManually: () => void;
+  onResetPlayTracker: () => void;
+  onClearPlayTracker: () => void;
   onExplodeChange: (v: number) => void;
   onSpeedChange: (v: number) => void;
   onSelectTheme: (themeKey: string) => void;
@@ -77,6 +87,8 @@ interface BottomDockProps {
 }
 
 const FACE_KEYS = ['U', 'D', 'L', 'R', 'F', 'B'] as const;
+const SLICE_KEYS = ['M', 'E', 'S'] as const;
+const ROTATION_KEYS = ['x', 'y', 'z'] as const;
 
 const COACH_PROMPTS = [
   'Explain my next move visually',
@@ -100,7 +112,10 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   explodeAmount,
   turnSpeed,
   activeLessonId,
-  lessonStepIndex,
+  lessonTracker,
+  playTracker,
+  playTrackerLabel,
+  hasLastScramble,
   recentNotations,
   onSetTab,
   onToggleCollapse,
@@ -110,6 +125,10 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onAutoSolve,
   onResetCube,
   onManualMove,
+  onTrackPlaySequence,
+  onPracticeScrambleManually,
+  onResetPlayTracker,
+  onClearPlayTracker,
   onExplodeChange,
   onSpeedChange,
   onSelectTheme,
@@ -124,6 +143,10 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onPlayLesson,
 }) => {
   const [counterClockwise, setCounterClockwise] = useState(false);
+  const [sequenceInput, setSequenceInput] = useState('');
+  const [sequenceError, setSequenceError] = useState<string | null>(null);
+  const sequenceInputRef = useRef<HTMLInputElement | null>(null);
+
   const [coachQuery, setCoachQuery] = useState('');
   const [coachAnswer, setCoachAnswer] = useState<string | null>(null);
   const [coachError, setCoachError] = useState<string | null>(null);
@@ -132,6 +155,76 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   const lessons = CURRICULUM[puzzleType] ?? CURRICULUM['3x3'];
   const activeLesson = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
   const presets = ALGORITHM_PRESETS.filter((p) => p.puzzleTypes.includes(puzzleType));
+  const lessonStepIndex = lessonTracker.currentIndex;
+
+  const isDark = theme.isDark;
+  const correctColors = isDark
+    ? { bg: 'rgba(34, 197, 94, 0.22)', border: '#22C55E', text: '#4ADE80' }
+    : { bg: '#DCFCE7', border: '#16A34A', text: '#15803D' };
+  const wrongColors = isDark
+    ? { bg: 'rgba(239, 68, 68, 0.24)', border: '#EF4444', text: '#FCA5A5' }
+    : { bg: '#FEE2E2', border: '#DC2626', text: '#B91C1C' };
+
+  const renderNotationRibbon = (
+    tracker: SequenceTrackerState,
+    keyPrefix: string,
+    testId: string
+  ) => {
+    return (
+      <div
+        className="flex items-center gap-1.5 overflow-x-auto kubi-scroll-x pt-0.5 pb-0.5"
+        data-testid={testId}
+      >
+        {tracker.tokens.map((token, idx) => {
+          const status = tracker.statuses[idx] ?? 'pending';
+          const isCurrent = idx === tracker.currentIndex;
+          const isHalf = isCurrent && tracker.halfTurnDirection !== null && status !== 'wrong';
+
+          let backgroundColor = theme.ui.surfaceSubtle;
+          let borderColor = theme.ui.border;
+          let color = theme.ui.text;
+
+          if (status === 'correct') {
+            backgroundColor = correctColors.bg;
+            borderColor = correctColors.border;
+            color = correctColors.text;
+          } else if (status === 'wrong') {
+            backgroundColor = wrongColors.bg;
+            borderColor = wrongColors.border;
+            color = wrongColors.text;
+          } else if (isCurrent) {
+            backgroundColor = theme.ui.accent;
+            borderColor = theme.ui.accent;
+            color = theme.ui.accentFg;
+          }
+
+          return (
+            <span
+              key={`${keyPrefix}-${idx}`}
+              data-step-index={idx}
+              data-step-status={status}
+              data-step-active={isCurrent ? 'true' : 'false'}
+              className="font-mono-tabular text-xs font-semibold px-2.5 py-1.5 rounded-lg border shrink-0 inline-flex items-center gap-1 transition-all duration-150"
+              style={{
+                backgroundColor,
+                borderColor,
+                color,
+              }}
+            >
+              {status === 'correct' && <Check className="w-3 h-3 shrink-0" aria-hidden="true" />}
+              {status === 'wrong' && <X className="w-3 h-3 shrink-0" aria-hidden="true" />}
+              <span>{token}</span>
+              {isHalf && (
+                <span className="text-[10px] opacity-85 font-bold" aria-label="half turn completed">
+                  ½
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
 
   const submitCoachQuestion = async (rawQuestion: string) => {
     const trimmed = rawQuestion.trim();
@@ -246,7 +339,10 @@ export const BottomDock: React.FC<BottomDockProps> = ({
             </div>
 
             {hintMove && (
-              <div className="hidden sm:flex items-center gap-1.5 text-xs pr-1 shrink-0">
+              <div
+                className="hidden sm:flex items-center gap-1.5 text-xs pr-1 shrink-0"
+                data-testid="next-guide-move"
+              >
                 <Compass className="w-3.5 h-3.5" style={{ color: theme.ui.accent }} />
                 <span style={{ color: theme.ui.muted }}>Next</span>
                 <span
@@ -349,7 +445,172 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   </div>
                 </div>
 
-                {/* Touch-Friendly WCA Face Turn Pad — fits all 6 faces + direction cleanly on 390px */}
+                {/* Live Scramble / Sequence Notation Tracker */}
+                <div className="flex flex-col gap-1.5 pt-2 border-t" style={{ borderColor: theme.ui.border }}>
+                  <div className="flex items-center gap-1.5">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const res = onTrackPlaySequence(sequenceInput);
+                        if (!res.ok) {
+                          setSequenceError(res.message ?? 'Enter valid WCA moves (e.g. U D L F R)');
+                        } else {
+                          setSequenceError(null);
+                          sequenceInputRef.current?.blur();
+                        }
+                      }}
+                      className="flex items-center gap-1.5 flex-1 min-w-0"
+                    >
+                      <input
+                        ref={sequenceInputRef}
+                        type="text"
+                        data-testid="play-sequence-input"
+                        value={sequenceInput}
+                        onChange={(e) => {
+                          setSequenceInput(e.target.value);
+                          if (sequenceError) setSequenceError(null);
+                        }}
+                        placeholder="Track scramble or moves (e.g. U D L F R M E S x y z)"
+                        aria-label="Track notation sequence"
+                        className="flex-1 min-w-0 h-8 px-2.5 rounded-lg border font-mono-tabular text-xs outline-none"
+                        style={{
+                          backgroundColor: theme.ui.surfaceSubtle,
+                          borderColor: sequenceError ? wrongColors.border : theme.ui.border,
+                          color: theme.ui.text,
+                        }}
+                      />
+                      <button
+                        type="submit"
+                        data-testid="play-sequence-submit"
+                        disabled={isBusy || !sequenceInput.trim()}
+                        className="h-8 px-2.5 rounded-lg border text-xs font-semibold shrink-0 disabled:opacity-45 cursor-pointer"
+                        style={{
+                          backgroundColor: theme.ui.accentSoft,
+                          borderColor: theme.ui.accent,
+                          color: theme.ui.accent,
+                        }}
+                      >
+                        Track
+                      </button>
+                    </form>
+
+                    {hasLastScramble && playTrackerLabel === 'Solve Guide' && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={onPracticeScrambleManually}
+                        title="Reset cube and practice executing this scramble step-by-step"
+                        className="hidden sm:inline-flex h-8 px-2.5 rounded-lg border text-[11px] font-semibold items-center shrink-0 cursor-pointer disabled:opacity-45 whitespace-nowrap"
+                        style={{
+                          backgroundColor: theme.ui.surfaceSubtle,
+                          borderColor: theme.ui.border,
+                          color: theme.ui.text,
+                        }}
+                      >
+                        Practice Scramble
+                      </button>
+                    )}
+
+                    {playTracker.tokens.length > 0 && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={onResetPlayTracker}
+                          aria-label="Restart tracked sequence"
+                          title="Restart sequence progress"
+                          className="h-8 w-8 rounded-lg border flex items-center justify-center cursor-pointer"
+                          style={{
+                            backgroundColor: theme.ui.surfaceSubtle,
+                            borderColor: theme.ui.border,
+                            color: theme.ui.muted,
+                          }}
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSequenceInput('');
+                            setSequenceError(null);
+                            onClearPlayTracker();
+                          }}
+                          aria-label="Clear tracked sequence"
+                          title="Clear sequence"
+                          className="h-8 w-8 rounded-lg border flex items-center justify-center cursor-pointer"
+                          style={{
+                            backgroundColor: theme.ui.surfaceSubtle,
+                            borderColor: theme.ui.border,
+                            color: theme.ui.muted,
+                          }}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {sequenceError && (
+                    <p
+                      role="alert"
+                      className="text-[11px] font-medium"
+                      style={{ color: wrongColors.text }}
+                    >
+                      {sequenceError}
+                    </p>
+                  )}
+
+                  {playTracker.tokens.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-medium" style={{ color: theme.ui.muted }}>
+                          {playTrackerLabel} · {Math.min(playTracker.currentIndex, playTracker.tokens.length)}/
+                          {playTracker.tokens.length}
+                        </span>
+
+                        {playTracker.lastWrongNotation ? (
+                          <span
+                            role="status"
+                            data-testid="play-sequence-feedback"
+                            className="font-mono-tabular font-semibold inline-flex items-center gap-1.5"
+                            style={{ color: wrongColors.text }}
+                          >
+                            <span>
+                              Wrong: {playTracker.lastWrongNotation} · Expected {playTracker.expectedOnWrong}
+                            </span>
+                            {canUndo && (
+                              <button
+                                type="button"
+                                onClick={onUndo}
+                                className="underline cursor-pointer"
+                                style={{ color: wrongColors.text }}
+                              >
+                                Undo
+                              </button>
+                            )}
+                          </span>
+                        ) : playTracker.currentIndex >= playTracker.tokens.length ? (
+                          <span
+                            role="status"
+                            data-testid="play-sequence-feedback"
+                            className="font-semibold inline-flex items-center gap-1"
+                            style={{ color: correctColors.text }}
+                          >
+                            <Check className="w-3 h-3" />
+                            <span>Sequence Complete</span>
+                          </span>
+                        ) : (
+                          <span className="font-mono-tabular" style={{ color: theme.ui.muted }}>
+                            Next: <strong style={{ color: theme.ui.accent }}>{playTracker.tokens[playTracker.currentIndex]}</strong>
+                          </span>
+                        )}
+                      </div>
+
+                      {renderNotationRibbon(playTracker, 'play-seq', 'play-sequence-ribbon')}
+                    </div>
+                  )}
+                </div>
+
+                {/* Touch-Friendly WCA Face, Center Slice (M/E/S) & Cube Rotation (x/y/z) Pad */}
                 <div className="flex items-center justify-between gap-1.5 sm:gap-2 pt-2 border-t" style={{ borderColor: theme.ui.border }}>
                   <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto kubi-scroll-x py-0.5 flex-1">
                     {FACE_KEYS.map((face) => {
@@ -358,10 +619,11 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         <button
                           key={face}
                           type="button"
+                          data-testid={`move-btn-${face}`}
                           disabled={isBusy}
                           onClick={() => onManualMove(notation)}
                           aria-label={`Turn ${notation} face`}
-                          className="min-w-[40px] sm:min-w-[44px] flex-1 sm:flex-initial h-10 px-1.5 sm:px-2.5 rounded-lg border font-mono-tabular text-xs sm:text-sm font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+                          className="min-w-[38px] sm:min-w-[40px] h-9 sm:h-10 px-1.5 sm:px-2 rounded-lg border font-mono-tabular text-xs sm:text-sm font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
                           style={{
                             backgroundColor: theme.ui.surfaceSubtle,
                             borderColor: theme.ui.border,
@@ -372,8 +634,74 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         </button>
                       );
                     })}
+
+                    {puzzleType !== '2x2' && (
+                      <>
+                        <span
+                          className="w-px h-6 mx-0.5 shrink-0"
+                          style={{ backgroundColor: theme.ui.border }}
+                          aria-hidden="true"
+                        />
+                        {SLICE_KEYS.map((slice) => {
+                          const notation = counterClockwise ? `${slice}'` : slice;
+                          return (
+                            <button
+                              key={slice}
+                              type="button"
+                              data-testid={`move-btn-${slice}`}
+                              disabled={isBusy}
+                              onClick={() => onManualMove(notation)}
+                              aria-label={`Turn ${notation} center slice`}
+                              title={`Center slice ${notation} (${slice})`}
+                              className="min-w-[38px] sm:min-w-[40px] h-9 sm:h-10 px-1.5 sm:px-2 rounded-lg border font-mono-tabular text-xs sm:text-sm font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+                              style={{
+                                backgroundColor: theme.ui.surfaceSubtle,
+                                borderColor: theme.ui.border,
+                                color: theme.ui.accent,
+                              }}
+                            >
+                              {notation}
+                            </button>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    <span
+                      className="w-px h-6 mx-0.5 shrink-0"
+                      style={{ backgroundColor: theme.ui.border }}
+                      aria-hidden="true"
+                    />
+                    {ROTATION_KEYS.map((rot) => {
+                      const notation = counterClockwise ? `${rot}'` : rot;
+                      return (
+                        <button
+                          key={rot}
+                          type="button"
+                          data-testid={`move-btn-${rot}`}
+                          disabled={isBusy}
+                          onClick={() => onManualMove(notation)}
+                          aria-label={`Rotate whole cube ${notation}`}
+                          title={`Whole-cube rotation ${notation} (${rot.toUpperCase()})`}
+                          className="min-w-[38px] sm:min-w-[40px] h-9 sm:h-10 px-1.5 sm:px-2 rounded-lg border font-mono-tabular text-xs sm:text-sm font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+                          style={{
+                            backgroundColor: theme.ui.surfaceSubtle,
+                            borderColor: theme.ui.border,
+                            color: theme.ui.muted,
+                          }}
+                        >
+                          {notation}
+                        </button>
+                      );
+                    })}
+
                     {puzzleType === '4x4' && (
                       <>
+                        <span
+                          className="w-px h-6 mx-0.5 shrink-0"
+                          style={{ backgroundColor: theme.ui.border }}
+                          aria-hidden="true"
+                        />
                         {(['Rw', 'Uw'] as const).map((wide) => {
                           const notation = counterClockwise ? `${wide}'` : wide;
                           return (
@@ -383,7 +711,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                               disabled={isBusy}
                               onClick={() => onManualMove(notation)}
                               aria-label={`Turn ${notation} wide layer`}
-                              className="min-w-[44px] h-10 px-2 rounded-lg border font-mono-tabular text-xs font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
+                              className="min-w-[42px] h-9 sm:h-10 px-2 rounded-lg border font-mono-tabular text-xs font-semibold transition-transform duration-150 active:scale-95 disabled:opacity-40 cursor-pointer shrink-0"
                               style={{
                                 backgroundColor: theme.ui.surfaceSubtle,
                                 borderColor: theme.ui.border,
@@ -403,7 +731,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                     onClick={() => setCounterClockwise((prev) => !prev)}
                     aria-pressed={counterClockwise}
                     aria-label="Toggle clockwise or prime direction"
-                    className="h-10 px-2.5 sm:px-3 rounded-lg border text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                    className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-lg border text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
                     style={{
                       backgroundColor: counterClockwise ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
                       borderColor: counterClockwise ? theme.ui.accent : theme.ui.border,
@@ -507,33 +835,57 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   </div>
                 </div>
 
-                {/* Steppable WCA Notation Ribbon */}
-                <div className="flex items-center gap-1.5 overflow-x-auto kubi-scroll pt-1">
-                  {activeLesson.algorithm.map((token, idx) => {
-                    const isCurrent = idx === lessonStepIndex;
-                    const isDone = idx < lessonStepIndex;
-                    return (
-                      <span
-                        key={`${activeLesson.id}-${idx}`}
-                        className="font-mono-tabular text-xs font-semibold px-2.5 py-1.5 rounded-lg border shrink-0 transition-all duration-150"
-                        style={{
-                          backgroundColor: isCurrent
-                            ? theme.ui.accent
-                            : isDone
-                              ? theme.ui.accentSoft
-                              : theme.ui.surfaceSubtle,
-                          borderColor: isCurrent || isDone ? theme.ui.accent : theme.ui.border,
-                          color: isCurrent
-                            ? theme.ui.accentFg
-                            : isDone
-                              ? theme.ui.accent
-                              : theme.ui.text,
-                        }}
-                      >
-                        {token}
+                {/* Live Interactive WCA Notation Ribbon (Green = Correct, Red = Wrong) */}
+                <div className="flex flex-col gap-1 pt-0.5">
+                  {lessonTracker.lastWrongNotation && (
+                    <div
+                      role="status"
+                      data-testid="learn-sequence-feedback"
+                      className="text-xs font-mono-tabular font-semibold flex items-center justify-between gap-2"
+                      style={{ color: wrongColors.text }}
+                    >
+                      <span>
+                        Wrong move: {lessonTracker.lastWrongNotation} · Expected {lessonTracker.expectedOnWrong}
                       </span>
-                    );
-                  })}
+                      {canUndo && (
+                        <button
+                          type="button"
+                          onClick={onUndo}
+                          className="underline text-xs cursor-pointer"
+                          style={{ color: wrongColors.text }}
+                        >
+                          Undo
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {!lessonTracker.lastWrongNotation &&
+                    lessonTracker.tokens.length > 0 &&
+                    lessonTracker.currentIndex >= lessonTracker.tokens.length && (
+                      <div
+                        role="status"
+                        data-testid="learn-sequence-feedback"
+                        className="text-xs font-semibold inline-flex items-center gap-1"
+                        style={{ color: correctColors.text }}
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Algorithm Complete — click Stage Case to practice again</span>
+                      </div>
+                    )}
+                  {renderNotationRibbon(
+                    lessonTracker.tokens.length > 0
+                      ? lessonTracker
+                      : {
+                          tokens: activeLesson.algorithm,
+                          currentIndex: 0,
+                          statuses: activeLesson.algorithm.map(() => 'pending'),
+                          halfTurnDirection: null,
+                          lastWrongNotation: null,
+                          expectedOnWrong: null,
+                        },
+                    activeLesson.id,
+                    'learn-sequence-ribbon'
+                  )}
                 </div>
               </div>
             )}

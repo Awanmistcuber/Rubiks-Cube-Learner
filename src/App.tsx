@@ -41,6 +41,16 @@ import {
   writeCookie,
   type DailyChallengeResponse,
 } from './cube/dailyChallenge';
+import {
+  advanceSequenceStep,
+  clearSequenceWrongState,
+  completeSequenceAll,
+  createSequenceTracker,
+  evaluateSequenceMove,
+  getNextExpectedToken,
+  parseNotationSequenceInput,
+  type SequenceTrackerState,
+} from './cube/sequenceTracker';
 import { buildSnapshotFilename, triggerPngDownload } from './cube/snapshot';
 import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
 import {
@@ -136,13 +146,25 @@ export default function App() {
   const [solveRecords, setSolveRecords] = useState<SolveRecord[]>(() => loadSolveRecords());
   const [activeDailyDateKey, setActiveDailyDateKey] = useState<string | null>(null);
 
-  // Curriculum Lesson state
+  // Curriculum Lesson & Play Sequence Trackers
   const [activeLessonId, setActiveLessonId] = useState<string>(CURRICULUM['3x3'][0].id);
-  const [lessonStepIndex, setLessonStepIndex] = useState(0);
+  const [lessonTracker, setLessonTracker] = useState<SequenceTrackerState>(() =>
+    createSequenceTracker(CURRICULUM['3x3'][0].algorithm)
+  );
+  const [playTracker, setPlayTracker] = useState<SequenceTrackerState>(() =>
+    createSequenceTracker([])
+  );
+  const [playTrackerLabel, setPlayTrackerLabel] = useState<string>('Sequence');
+  const [hasLastScramble, setHasLastScramble] = useState(false);
 
   // Mutable refs for 60Hz engine callbacks (never tear down WebGL!)
   const historyRef = useRef<CubeMove[]>([]);
   const currentScrambleRef = useRef<string>('');
+  const lastScrambleTokensRef = useRef<string[]>([]);
+  const lessonTrackerRef = useRef<SequenceTrackerState>(lessonTracker);
+  const playTrackerRef = useRef<SequenceTrackerState>(playTracker);
+  const playTrackerLabelRef = useRef<string>(playTrackerLabel);
+  const isUndoingWrongRef = useRef<boolean>(false);
   const activeDailyRef = useRef<{ dateKey: string; puzzleType: PuzzleType; scramble: string } | null>(null);
   const timerModalOpenRef = useRef<boolean>(false);
   const paletteStudioOpenRef = useRef<boolean>(false);
@@ -160,6 +182,7 @@ export default function App() {
   puzzleRef.current = puzzleType;
   gameStateRef.current = gameState;
   activeTabRef.current = activeTab;
+  playTrackerLabelRef.current = playTrackerLabel;
   timerModalOpenRef.current = timerModalTab !== null;
   paletteStudioOpenRef.current = paletteStudioOpen;
 
@@ -247,8 +270,55 @@ export default function App() {
 
           setIsSolved(solvedNow);
 
-          // Update live hint arrow if a hint was displayed
-          if (solvedNow) {
+          // Live sequence tracking & immediate 3D guide arrow progression in Learn and Play & Solve
+          let handledGuideArrow = false;
+          if (!isFromQueue && !isScramblingRef.current) {
+            if (activeTabRef.current === 'learn' && lessonTrackerRef.current.tokens.length > 0) {
+              const nextTracker = isUndoingWrongRef.current
+                ? clearSequenceWrongState(lessonTrackerRef.current)
+                : evaluateSequenceMove(lessonTrackerRef.current, move, puzzleRef.current);
+              isUndoingWrongRef.current = false;
+              lessonTrackerRef.current = nextTracker;
+              setLessonTracker(nextTracker);
+
+              const nextToken = getNextExpectedToken(nextTracker);
+              if (nextToken) {
+                const nextMove = parseNotation(nextToken, puzzleRef.current);
+                setHintMove(nextMove);
+                engine.showGuideArrow(nextMove);
+              } else {
+                setHintMove(null);
+                engine.clearGuideArrow();
+              }
+              handledGuideArrow = true;
+            } else if (activeTabRef.current === 'play' && playTrackerRef.current.tokens.length > 0) {
+              const nextTracker = isUndoingWrongRef.current
+                ? clearSequenceWrongState(playTrackerRef.current)
+                : evaluateSequenceMove(playTrackerRef.current, move, puzzleRef.current);
+              isUndoingWrongRef.current = false;
+              playTrackerRef.current = nextTracker;
+              setPlayTracker(nextTracker);
+
+              // Auto-advance the 3D guide arrow for user-tracked sequences and manual scramble practice
+              if (playTrackerLabelRef.current !== 'Solve Guide') {
+                const nextToken = getNextExpectedToken(nextTracker);
+                if (nextToken) {
+                  const nextMove = parseNotation(nextToken, puzzleRef.current);
+                  setHintMove(nextMove);
+                  engine.showGuideArrow(nextMove);
+                } else {
+                  setHintMove(null);
+                  engine.clearGuideArrow();
+                }
+                handledGuideArrow = true;
+              }
+            } else {
+              isUndoingWrongRef.current = false;
+            }
+          }
+
+          // Clear standalone hint arrow once the cube is solved
+          if (solvedNow && !handledGuideArrow) {
             engine.clearGuideArrow();
             setHintMove(null);
           }
@@ -369,6 +439,15 @@ export default function App() {
             elapsedAccumRef.current = 0;
             timerRunningRef.current = false;
             setElapsedMs(0);
+
+            if (!solvedNow) {
+              const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
+              const nextPlayTracker = createSequenceTracker(solution.map((m) => m.notation));
+              playTrackerRef.current = nextPlayTracker;
+              setPlayTracker(nextPlayTracker);
+              playTrackerLabelRef.current = 'Solve Guide';
+              setPlayTrackerLabel('Solve Guide');
+            }
           }
           isAutoSolvingRef.current = false;
           setIsBusy(false);
@@ -423,8 +502,23 @@ export default function App() {
     setHintMove(null);
     isScramblingRef.current = false;
     isAutoSolvingRef.current = false;
+    isUndoingWrongRef.current = false;
     setIsBusy(false);
-    setLessonStepIndex(0);
+
+    const lessons = CURRICULUM[puzzleRef.current] ?? CURRICULUM['3x3'];
+    const defaultLesson = lessons[0];
+    const freshLesson = createSequenceTracker(defaultLesson.algorithm);
+    lessonTrackerRef.current = freshLesson;
+    setLessonTracker(freshLesson);
+
+    const emptyPlay = createSequenceTracker([]);
+    playTrackerRef.current = emptyPlay;
+    setPlayTracker(emptyPlay);
+    playTrackerLabelRef.current = 'Sequence';
+    setPlayTrackerLabel('Sequence');
+    lastScrambleTokensRef.current = [];
+    setHasLastScramble(false);
+
     activeDailyRef.current = null;
     setActiveDailyDateKey(null);
   }, []);
@@ -528,7 +622,10 @@ export default function App() {
     resetProgressTrackers();
 
     const scrambleMoves = generateScramble(puzzleRef.current);
-    currentScrambleRef.current = scrambleMoves.map((m) => m.notation).join(' ');
+    const scrambleTokens = scrambleMoves.map((m) => m.notation);
+    currentScrambleRef.current = scrambleTokens.join(' ');
+    lastScrambleTokensRef.current = scrambleTokens;
+    setHasLastScramble(scrambleTokens.length > 0);
     isScramblingRef.current = true;
     setIsBusy(true);
     engine.enqueueMoves(scrambleMoves, 2.35);
@@ -551,6 +648,8 @@ export default function App() {
       currentScrambleRef.current = scrambleStr;
 
       const moves = parseAlgorithm(scrambleStr, targetPuzzle);
+      lastScrambleTokensRef.current = moves.map((m) => m.notation);
+      setHasLastScramble(moves.length > 0);
       if (moves.length > 0) {
         isScramblingRef.current = true;
         setIsBusy(true);
@@ -579,6 +678,8 @@ export default function App() {
       setActiveDailyDateKey(dateKey);
 
       const moves = parseAlgorithm(scrambleStr, targetPuzzle);
+      lastScrambleTokensRef.current = moves.map((m) => m.notation);
+      setHasLastScramble(moves.length > 0);
       if (moves.length > 0) {
         isScramblingRef.current = true;
         setIsBusy(true);
@@ -741,8 +842,15 @@ export default function App() {
       if (!engine || isBusy) return;
       const move = parseNotation(notation, puzzleRef.current);
       if (!move) return;
-      engine.clearGuideArrow();
-      setHintMove(null);
+      const keepActiveGuide =
+        (activeTabRef.current === 'learn' && lessonTrackerRef.current.tokens.length > 0) ||
+        (activeTabRef.current === 'play' &&
+          playTrackerRef.current.tokens.length > 0 &&
+          playTrackerLabelRef.current !== 'Solve Guide');
+      if (!keepActiveGuide) {
+        engine.clearGuideArrow();
+        setHintMove(null);
+      }
       engine.enqueueMove(move, false, 1.0);
     },
     [isBusy]
@@ -753,10 +861,102 @@ export default function App() {
     if (!engine || isBusy || historyRef.current.length === 0) return;
     const last = historyRef.current[historyRef.current.length - 1];
     const inv = invertMove(last);
-    engine.clearGuideArrow();
-    setHintMove(null);
+
+    const activeTracker =
+      activeTabRef.current === 'learn'
+        ? lessonTrackerRef.current
+        : activeTabRef.current === 'play'
+          ? playTrackerRef.current
+          : null;
+
+    if (activeTracker && activeTracker.lastWrongNotation !== null) {
+      isUndoingWrongRef.current = true;
+    } else {
+      isUndoingWrongRef.current = false;
+      engine.clearGuideArrow();
+      setHintMove(null);
+    }
+
     engine.enqueueMove(inv, false, 1.25);
   }, [isBusy]);
+
+  const handleTrackPlaySequence = useCallback(
+    (rawInput: string): { ok: boolean; message?: string } => {
+      const { tokens, invalidTokens } = parseNotationSequenceInput(rawInput, puzzleRef.current);
+      if (tokens.length === 0) {
+        return {
+          ok: false,
+          message:
+            invalidTokens.length > 0
+              ? `Unsupported notation: ${invalidTokens.slice(0, 3).join(', ')}`
+              : 'Enter WCA moves like U D L F R, M E S, or x y z.',
+        };
+      }
+      cubeAudio.playUiTick();
+      const next = createSequenceTracker(tokens);
+      playTrackerRef.current = next;
+      setPlayTracker(next);
+      playTrackerLabelRef.current = 'Sequence';
+      setPlayTrackerLabel('Sequence');
+
+      const firstMove = parseNotation(tokens[0], puzzleRef.current);
+      setHintMove(firstMove);
+      engineRef.current?.showGuideArrow(firstMove);
+      return {
+        ok: true,
+        message:
+          invalidTokens.length > 0
+            ? `Skipped unsupported: ${invalidTokens.join(', ')}`
+            : undefined,
+      };
+    },
+    []
+  );
+
+  const handlePracticeScrambleManually = useCallback(() => {
+    const engine = engineRef.current;
+    const tokens = lastScrambleTokensRef.current;
+    if (!engine || isBusy || tokens.length === 0) return;
+    cubeAudio.playUiTick();
+    engine.loadPuzzle(puzzleRef.current, false);
+    resetProgressTrackers();
+    lastScrambleTokensRef.current = tokens;
+    setHasLastScramble(true);
+
+    const next = createSequenceTracker(tokens);
+    playTrackerRef.current = next;
+    setPlayTracker(next);
+    playTrackerLabelRef.current = 'Scramble';
+    setPlayTrackerLabel('Scramble');
+
+    const firstMove = parseNotation(tokens[0], puzzleRef.current);
+    setHintMove(firstMove);
+    engine.showGuideArrow(firstMove);
+  }, [isBusy, resetProgressTrackers]);
+
+  const handleResetPlayTracker = useCallback(() => {
+    if (playTrackerRef.current.tokens.length === 0) return;
+    cubeAudio.playUiTick();
+    const restarted = createSequenceTracker(playTrackerRef.current.tokens);
+    playTrackerRef.current = restarted;
+    setPlayTracker(restarted);
+    if (playTrackerLabelRef.current !== 'Solve Guide') {
+      const firstMove = parseNotation(restarted.tokens[0], puzzleRef.current);
+      setHintMove(firstMove);
+      engineRef.current?.showGuideArrow(firstMove);
+    }
+  }, []);
+
+  const handleClearPlayTracker = useCallback(() => {
+    cubeAudio.playUiTick();
+    const empty = createSequenceTracker([]);
+    playTrackerRef.current = empty;
+    setPlayTracker(empty);
+    playTrackerLabelRef.current = 'Sequence';
+    setPlayTrackerLabel('Sequence');
+    setHintMove(null);
+    engineRef.current?.clearGuideArrow();
+  }, []);
 
   const handleHint = useCallback(() => {
     const engine = engineRef.current;
@@ -826,7 +1026,10 @@ export default function App() {
       if (!engine || isBusy) return;
       resetProgressTrackers();
       setActiveLessonId(lesson.id);
-      setLessonStepIndex(0);
+      const fresh = createSequenceTracker(lesson.algorithm);
+      lessonTrackerRef.current = fresh;
+      setLessonTracker(fresh);
+
       engine.applySetupInstantly(lesson.setupMoves);
       historyRef.current = parseAlgorithm(lesson.setupMoves, puzzleRef.current);
       setIsSolved(false);
@@ -849,16 +1052,19 @@ export default function App() {
     (lesson: LessonStep) => {
       const engine = engineRef.current;
       if (!engine || isBusy) return;
-      if (lessonStepIndex >= lesson.algorithm.length) return;
-      const move = parseNotation(lesson.algorithm[lessonStepIndex], puzzleRef.current);
+      const curr = lessonTrackerRef.current;
+      if (curr.currentIndex >= lesson.algorithm.length) return;
+      const move = parseNotation(lesson.algorithm[curr.currentIndex], puzzleRef.current);
       if (!move) return;
 
-      const nextIdx = lessonStepIndex + 1;
-      setLessonStepIndex(nextIdx);
+      const nextTracker = advanceSequenceStep(curr);
+      lessonTrackerRef.current = nextTracker;
+      setLessonTracker(nextTracker);
       engine.enqueueMove(move, true, 0.95);
 
-      if (nextIdx < lesson.algorithm.length) {
-        const upcoming = parseNotation(lesson.algorithm[nextIdx], puzzleRef.current);
+      const nextToken = getNextExpectedToken(nextTracker);
+      if (nextToken) {
+        const upcoming = parseNotation(nextToken, puzzleRef.current);
         setHintMove(upcoming);
         engine.showGuideArrow(upcoming);
       } else {
@@ -866,7 +1072,7 @@ export default function App() {
         engine.clearGuideArrow();
       }
     },
-    [isBusy, lessonStepIndex]
+    [isBusy]
   );
 
   const handlePlayLesson = useCallback(
@@ -881,7 +1087,9 @@ export default function App() {
       setIsSolved(false);
 
       const algMoves = parseAlgorithm(lesson.algorithm, puzzleRef.current);
-      setLessonStepIndex(algMoves.length);
+      const doneTracker = completeSequenceAll(createSequenceTracker(lesson.algorithm));
+      lessonTrackerRef.current = doneTracker;
+      setLessonTracker(doneTracker);
       setIsBusy(true);
       engine.clearGuideArrow();
       engine.enqueueMoves(algMoves, 0.85);
@@ -897,7 +1105,8 @@ export default function App() {
     });
   }, []);
 
-  // Global Keyboard Shortcuts (WCA moves, Enter/Space title start, Esc/P pause, M mute, H HUD, Z undo, T stopwatch)
+  // Global Keyboard Shortcuts (WCA faces U/D/L/R/F/B, center slices M/E/S, cube rotations x/y/z,
+  // Shift for prime ', Enter/Space title start, Esc/P pause, V mute, H HUD, Ctrl+Z/Backspace undo, T stopwatch)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (timerModalOpenRef.current || paletteStudioOpenRef.current) return;
@@ -915,6 +1124,14 @@ export default function App() {
         return;
       }
 
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (gameStateRef.current === 'playing') handleUndo();
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
       if (e.key === 'Escape' || e.key.toLowerCase() === 'p') {
         e.preventDefault();
         if (gameStateRef.current === 'playing') setGameState('paused');
@@ -924,10 +1141,24 @@ export default function App() {
 
       if (gameStateRef.current !== 'playing') return;
 
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
       const upper = e.key.toUpperCase();
-      if (['U', 'D', 'L', 'R', 'F', 'B'].includes(upper)) {
+      if (['U', 'D', 'L', 'R', 'F', 'B', 'M', 'E', 'S'].includes(upper)) {
         e.preventDefault();
         const notation = e.shiftKey ? `${upper}'` : upper;
+        handleManualMove(notation);
+        return;
+      }
+
+      if (['X', 'Y', 'Z'].includes(upper)) {
+        e.preventDefault();
+        const lower = upper.toLowerCase();
+        const notation = e.shiftKey ? `${lower}'` : lower;
         handleManualMove(notation);
         return;
       }
@@ -935,15 +1166,12 @@ export default function App() {
       if (upper === 'T') {
         e.preventDefault();
         setTimerModalTab('stopwatch');
-      } else if (upper === 'M') {
+      } else if (upper === 'V') {
         e.preventDefault();
         handleToggleMute();
       } else if (upper === 'H') {
         e.preventDefault();
         setDockCollapsed((prev) => !prev);
-      } else if (upper === 'Z') {
-        e.preventDefault();
-        handleUndo();
       }
     };
 
@@ -1016,16 +1244,41 @@ export default function App() {
               explodeAmount={explodeAmount}
               turnSpeed={turnSpeed}
               activeLessonId={activeLessonId}
-              lessonStepIndex={lessonStepIndex}
+              lessonTracker={lessonTracker}
+              playTracker={playTracker}
+              playTrackerLabel={playTrackerLabel}
+              hasLastScramble={hasLastScramble}
               recentNotations={recentNotations}
               onSetTab={(tab) => {
                 cubeAudio.playUiTick();
                 setActiveTab(tab);
+                activeTabRef.current = tab;
                 if (tab === 'learn') {
                   const lessons = CURRICULUM[puzzleType];
                   const current = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
                   if (isSolved && !hasScrambled) {
                     handleStageLesson(current);
+                  } else {
+                    const nextToken = getNextExpectedToken(lessonTrackerRef.current);
+                    if (nextToken) {
+                      const nextMove = parseNotation(nextToken, puzzleRef.current);
+                      setHintMove(nextMove);
+                      engineRef.current?.showGuideArrow(nextMove);
+                    }
+                  }
+                } else if (tab === 'play') {
+                  if (
+                    playTrackerRef.current.tokens.length > 0 &&
+                    playTrackerLabelRef.current !== 'Solve Guide'
+                  ) {
+                    const nextToken = getNextExpectedToken(playTrackerRef.current);
+                    const nextMove = nextToken ? parseNotation(nextToken, puzzleRef.current) : null;
+                    setHintMove(nextMove);
+                    if (nextMove) engineRef.current?.showGuideArrow(nextMove);
+                    else engineRef.current?.clearGuideArrow();
+                  } else {
+                    setHintMove(null);
+                    engineRef.current?.clearGuideArrow();
                   }
                 }
               }}
@@ -1036,6 +1289,10 @@ export default function App() {
               onAutoSolve={handleAutoSolve}
               onResetCube={handleResetCube}
               onManualMove={handleManualMove}
+              onTrackPlaySequence={handleTrackPlaySequence}
+              onPracticeScrambleManually={handlePracticeScrambleManually}
+              onResetPlayTracker={handleResetPlayTracker}
+              onClearPlayTracker={handleClearPlayTracker}
               onExplodeChange={handleExplodeChange}
               onSpeedChange={handleSpeedChange}
               onSelectTheme={handleSelectTheme}

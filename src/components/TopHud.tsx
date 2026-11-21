@@ -237,7 +237,7 @@ export const TopHud: React.FC<TopHudProps> = ({
               onToggleMute();
             }}
             aria-label={isMuted ? 'Unmute audio' : 'Mute audio'}
-            title={isMuted ? 'Unmute audio (M)' : 'Mute audio (M)'}
+            title={isMuted ? 'Unmute audio (V)' : 'Mute audio (V)'}
             className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center transition-colors duration-150 cursor-pointer"
             style={{ color: isMuted ? theme.ui.muted : theme.ui.text }}
           >

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Award,
   BookOpen,
@@ -364,6 +364,178 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   );
 };
 
+interface ConfettiPiece {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  aspect: number;
+  color: string;
+  rotation: number;
+  rotationSpeed: number;
+  tiltPhase: number;
+  tiltSpeed: number;
+  life: number;
+  maxLife: number;
+}
+
+const VictoryConfettiCanvas: React.FC<{ theme: ThemePalette }> = ({ theme }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const toHex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
+    const palette = [
+      toHex(theme.scene.faceColors.px),
+      toHex(theme.scene.faceColors.nx),
+      toHex(theme.scene.faceColors.py),
+      toHex(theme.scene.faceColors.pz),
+      toHex(theme.scene.faceColors.nz),
+      theme.ui.accent,
+    ];
+
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    const resize = () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.floor(width * dpr));
+      canvas.height = Math.max(1, Math.floor(height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    const pieces: ConfettiPiece[] = [];
+    const totalCount = prefersReducedMotion ? 42 : 108;
+
+    for (let i = 0; i < totalCount; i++) {
+      const fromLeft = i % 3 === 0;
+      const fromRight = i % 3 === 1;
+      const spawnX = fromLeft
+        ? width * (0.14 + Math.random() * 0.2)
+        : fromRight
+          ? width * (0.66 + Math.random() * 0.2)
+          : width * (0.25 + Math.random() * 0.5);
+      const spawnY = prefersReducedMotion
+        ? height * (0.1 + Math.random() * 0.72)
+        : fromLeft || fromRight
+          ? height * (0.58 + Math.random() * 0.16)
+          : -16 - Math.random() * 140;
+
+      const angle = fromLeft
+        ? -Math.PI * (0.28 + Math.random() * 0.22)
+        : fromRight
+          ? -Math.PI * (0.5 + Math.random() * 0.22)
+          : Math.PI * 0.5 + (Math.random() - 0.5) * 0.4;
+
+      const speed = fromLeft || fromRight ? 420 + Math.random() * 360 : 85 + Math.random() * 130;
+
+      pieces.push({
+        x: spawnX,
+        y: spawnY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        size: 6 + Math.random() * 5,
+        aspect: 0.45 + Math.random() * 0.5,
+        color: palette[i % palette.length],
+        rotation: Math.random() * Math.PI * 2,
+        rotationSpeed: (Math.random() - 0.5) * 8.5,
+        tiltPhase: Math.random() * Math.PI * 2,
+        tiltSpeed: 4 + Math.random() * 5,
+        life: 0,
+        maxLife: 2.6 + Math.random() * 1.6,
+      });
+    }
+
+    const drawPieces = () => {
+      ctx.clearRect(0, 0, width, height);
+      for (const p of pieces) {
+        const progress = p.life / p.maxLife;
+        if (progress >= 1) continue;
+        const alpha = progress > 0.72 ? Math.max(0, 1 - (progress - 0.72) / 0.28) : 0.94;
+        const flipScale = 0.28 + 0.72 * Math.abs(Math.cos(p.tiltPhase));
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rotation);
+        ctx.scale(1, flipScale);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size * 0.5, -p.size * p.aspect * 0.5, p.size, p.size * p.aspect);
+        ctx.restore();
+      }
+    };
+
+    if (prefersReducedMotion) {
+      drawPieces();
+      return () => {
+        window.removeEventListener('resize', resize);
+      };
+    }
+
+    let rafId = 0;
+    let lastTs = performance.now();
+
+    const step = (now: number) => {
+      const dt = Math.min(Math.max((now - lastTs) / 1000, 0.001), 0.05);
+      lastTs = now;
+
+      let aliveCount = 0;
+      const gravity = 560;
+      const drag = Math.exp(-1.15 * dt);
+
+      for (const p of pieces) {
+        p.life += dt;
+        if (p.life >= p.maxLife) continue;
+        aliveCount++;
+
+        p.vx *= drag;
+        p.vy = p.vy * drag + gravity * dt;
+        p.x += p.vx * dt + Math.sin(p.tiltPhase) * 28 * dt;
+        p.y += p.vy * dt;
+        p.rotation += p.rotationSpeed * dt;
+        p.tiltPhase += p.tiltSpeed * dt;
+      }
+
+      drawPieces();
+      if (aliveCount > 0) {
+        rafId = window.requestAnimationFrame(step);
+      } else {
+        ctx.clearRect(0, 0, width, height);
+      }
+    };
+
+    rafId = window.requestAnimationFrame(step);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', resize);
+    };
+  }, [theme]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      data-testid="victory-confetti-canvas"
+      aria-hidden="true"
+      className="fixed inset-0 w-full h-full pointer-events-none z-0"
+    />
+  );
+};
+
 interface VictoryModalProps {
   theme: ThemePalette;
   snapshot: SolveSnapshot;
@@ -389,8 +561,9 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
       className="fixed inset-0 z-30 flex items-center justify-center p-4"
       style={{ backgroundColor: 'rgba(10, 12, 16, 0.45)' }}
     >
+      <VictoryConfettiCanvas theme={theme} />
       <div
-        className="w-full max-w-md max-h-[92dvh] overflow-y-auto kubi-scroll rounded-2xl border p-5 sm:p-7 animate-kubi-enter"
+        className="relative z-10 w-full max-w-md max-h-[92dvh] overflow-y-auto kubi-scroll rounded-2xl border p-5 sm:p-7 animate-kubi-enter"
         style={{
           backgroundColor: theme.ui.surface,
           borderColor: theme.ui.border,

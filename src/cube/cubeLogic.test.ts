@@ -106,3 +106,44 @@ test('computeMoveFromSwipe maps front-face leftward swipe on top row to U move',
   assert.equal(move.notation, 'U');
   assert.deepEqual(move.layers, [1]);
 });
+
+test('center slice notations M, E, S work on 3x3/4x4/mirror and are null on 2x2', () => {
+  for (const slice of ['M', 'E', 'S']) {
+    assert.equal(parseNotation(slice, '2x2'), null, `${slice} should not parse on 2x2`);
+  }
+
+  for (const puzzle of ['3x3', '4x4', 'mirror'] as PuzzleType[]) {
+    for (const slice of ['M', "M'", 'E', "E'", 'S', "S'"]) {
+      let state = createSolvedCube(puzzle);
+      const move = parseNotation(slice, puzzle);
+      assert.ok(move, `Failed to parse ${slice} on ${puzzle}`);
+      state = applyMove(state, move);
+      assert.equal(isCubeSolved(state, puzzle), false, `${puzzle} after ${slice} should be scrambled`);
+      for (let i = 0; i < 3; i++) {
+        state = applyMove(state, move);
+      }
+      assert.equal(isCubeSolved(state, puzzle), true, `${puzzle} after 4x ${slice} must return solved`);
+    }
+  }
+});
+
+test('whole-cube rotations x, y, z preserve solved state and simplify cleanly across all puzzles', () => {
+  for (const puzzle of ['2x2', '3x3', '4x4', 'mirror'] as PuzzleType[]) {
+    for (const rot of ['x', "x'", 'x2', 'y', "y'", 'y2', 'z', "z'", 'z2']) {
+      const move = parseNotation(rot, puzzle);
+      assert.ok(move, `Failed to parse ${rot} on ${puzzle}`);
+      const solved = createSolvedCube(puzzle);
+      const rotated = applyMove(solved, move);
+      assert.equal(isCubeSolved(rotated, puzzle), true, `${puzzle} after ${rot} must remain solved`);
+    }
+  }
+
+  const simplified = simplifyMoves(parseAlgorithm("x x y y' z z z", '3x3'), '3x3');
+  assert.deepEqual(
+    simplified.map((m) => m.notation),
+    ['x2', "z'"]
+  );
+  assert.equal(parseNotation('xw', '3x3'), null);
+  assert.equal(parseNotation('Mw', '3x3'), null);
+});
+

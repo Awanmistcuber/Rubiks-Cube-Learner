@@ -253,6 +253,8 @@ export class ThreeCubeEngine {
   private activePointers = new Set<number>();
   private swipePointerId: number | null = null;
   private swipeActive = false;
+  private layerDragLocked = false;
+  private layerDragPointerId: number | null = null;
   private swipeHitCubieId: number | null = null;
   private swipeHitNormal = new THREE.Vector3();
   private swipeHitPoint = new THREE.Vector3();
@@ -902,8 +904,10 @@ export class ThreeCubeEngine {
     const avgLayer = move.layers.reduce((acc, v) => acc + v, 0) / move.layers.length;
     const size = getPuzzleSize(this.puzzleType);
     const unitScale = this.puzzleType === 'mirror' ? 0.92 : 2.75 / size;
-    const layerOffset = avgLayer * unitScale;
-    const radius = 1.92;
+    const isWholeCube = move.layers.length === size;
+    const isMiddleSlice = !isWholeCube && Math.abs(avgLayer) < 0.01;
+    const layerOffset = isWholeCube ? 0 : avgLayer * unitScale;
+    const radius = isWholeCube ? 2.18 : isMiddleSlice ? 2.02 : 1.92;
 
     // Build a 95-degree curved arc in XY plane, then orient to move.axis
     const arcSpan = (Math.PI * 0.56) * move.direction;
@@ -1099,6 +1103,7 @@ export class ThreeCubeEngine {
 
   private bindPointerEvents() {
     const dom = this.renderer.domElement;
+    const container = this.container;
 
     const getNDC = (clientX: number, clientY: number, target: THREE.Vector2) => {
       const rect = dom.getBoundingClientRect();
@@ -1106,19 +1111,29 @@ export class ThreeCubeEngine {
       target.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     };
 
+    const releaseLayerDragLock = () => {
+      this.swipeActive = false;
+      this.swipePointerId = null;
+      this.swipeHitCubieId = null;
+      this.layerDragLocked = false;
+      this.layerDragPointerId = null;
+      this.controls.enabled = this.gameState === 'playing';
+    };
+
+    // Capture-phase listener on the parent container runs strictly BEFORE OrbitControls'
+    // bubble-phase listener on renderer.domElement, ensuring OrbitControls never enters
+    // rotate state when the user grabs a cube layer.
     const onPointerDown = (e: PointerEvent) => {
       if (this.gameState !== 'playing') return;
+      if (e.target !== dom) return;
       if (e.button !== 0 && e.pointerType === 'mouse') return;
 
       this.activePointers.add(e.pointerId);
 
       // If a second finger touches down (pinch-to-zoom / 2-finger orbit), cancel face swipe and yield to OrbitControls
       if (this.activePointers.size > 1) {
-        if (this.swipeActive) {
-          this.swipeActive = false;
-          this.swipePointerId = null;
-          this.swipeHitCubieId = null;
-          this.controls.enabled = this.gameState === 'playing';
+        if (this.swipeActive || this.layerDragLocked) {
+          releaseLayerDragLock();
         }
         return;
       }
@@ -1135,6 +1150,8 @@ export class ThreeCubeEngine {
         if (cubieId !== undefined) {
           this.swipeActive = true;
           this.swipePointerId = e.pointerId;
+          this.layerDragLocked = true;
+          this.layerDragPointerId = e.pointerId;
           this.swipeHitCubieId = cubieId;
           this.pointerDownPos.set(e.clientX, e.clientY);
           this.swipeHitPoint.copy(hit.point);
@@ -1147,7 +1164,9 @@ export class ThreeCubeEngine {
           const invCubeQuat = this.cubeHolder.getWorldQuaternion(_q1).invert();
           this.swipeHitNormal.copy(worldNormal).applyQuaternion(invCubeQuat).normalize();
 
+          // Hard-lock OrbitControls and block propagation so the camera/cube never rotates
           this.controls.enabled = false;
+          e.stopPropagation();
         }
       }
     };
@@ -1168,7 +1187,7 @@ export class ThreeCubeEngine {
 
       const dx = e.clientX - this.pointerDownPos.x;
       const dy = e.clientY - this.pointerDownPos.y;
-      const swipeThreshold = e.pointerType === 'touch' ? 16 : 22;
+      const swipeThreshold = e.pointerType === 'touch' ? 16 : 20;
       if (Math.hypot(dx, dy) < swipeThreshold) return;
 
       // Map screen drag vector onto camera right/up plane, then into cubeHolder local space
@@ -1192,29 +1211,32 @@ export class ThreeCubeEngine {
         }
       }
 
+      // Disarm swipe so one drag triggers one crisp turn, while keeping OrbitControls
+      // locked until pointerup so continuing the drag never rotates the cube.
       this.swipeActive = false;
       this.swipePointerId = null;
       this.swipeHitCubieId = null;
-      this.controls.enabled = this.gameState === 'playing';
     };
 
     const onPointerUp = (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
-      if (this.swipeActive && (this.swipePointerId === e.pointerId || this.activePointers.size === 0)) {
-        this.swipeActive = false;
-        this.swipePointerId = null;
-        this.swipeHitCubieId = null;
-        this.controls.enabled = this.gameState === 'playing';
+      if (
+        (this.swipeActive || this.layerDragLocked) &&
+        (this.layerDragPointerId === e.pointerId ||
+          this.swipePointerId === e.pointerId ||
+          this.activePointers.size === 0)
+      ) {
+        releaseLayerDragLock();
       }
     };
 
-    dom.addEventListener('pointerdown', onPointerDown);
+    container.addEventListener('pointerdown', onPointerDown, { capture: true });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerUp);
 
     this.cleanupPointers = () => {
-      dom.removeEventListener('pointerdown', onPointerDown);
+      container.removeEventListener('pointerdown', onPointerDown, { capture: true });
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);

@@ -235,7 +235,7 @@ export function applyMove(cubies: CubieState[], move: CubeMove): CubieState[] {
 }
 
 /**
- * Parses a single WCA notation token (e.g. "R", "U'", "F2", "Rw", "M", "Uw'") into a CubeMove.
+ * Parses a single WCA notation token (e.g. "R", "U'", "F2", "Rw", "M", "E'", "S", "x", "y'", "z2") into a CubeMove.
  */
 export function parseNotation(token: string, puzzleType: PuzzleType): CubeMove | null {
   const clean = token.trim();
@@ -248,10 +248,14 @@ export function parseNotation(token: string, puzzleType: PuzzleType): CubeMove |
   const innerMaxC = coords.length >= 4 ? coords[coords.length - 2] : 0;
   const innerMinC = coords.length >= 4 ? coords[1] : 0;
 
-  const match = clean.match(/^([UDLRFBMES])(w)?(['2])?$/);
+  const match = clean.match(/^([UDLRFBMESxyz])(w)?(['2])?$/);
   if (!match) return null;
 
   const [, face, wide, modifier] = match;
+  if (wide && !['U', 'D', 'L', 'R', 'F', 'B'].includes(face)) {
+    return null;
+  }
+
   const isPrime = modifier === "'";
   const turns: 1 | 2 = modifier === '2' ? 2 : 1;
 
@@ -308,6 +312,21 @@ export function parseNotation(token: string, puzzleType: PuzzleType): CubeMove |
       layers = size === 4 ? [innerMinC, innerMaxC] : [0];
       baseDir = -1; // Follows F direction
       break;
+    case 'x':
+      axis = 'x';
+      layers = [...coords];
+      baseDir = -1; // Whole-cube rotation following R direction
+      break;
+    case 'y':
+      axis = 'y';
+      layers = [...coords];
+      baseDir = -1; // Whole-cube rotation following U direction
+      break;
+    case 'z':
+      axis = 'z';
+      layers = [...coords];
+      baseDir = -1; // Whole-cube rotation following F direction
+      break;
     default:
       return null;
   }
@@ -362,12 +381,16 @@ export function buildNotationFromMove(
 
   const isMax = layers.includes(maxC);
   const isMin = layers.includes(minC);
+  const isAllLayers = layers.length === size && isMax && isMin;
   const isWide = layers.length > 1;
 
   let baseFace = 'R';
   let baseDir: 1 | -1 = -1;
 
-  if (axis === 'x') {
+  if (isAllLayers) {
+    baseFace = axis;
+    baseDir = -1;
+  } else if (axis === 'x') {
     if (isMax) {
       baseFace = isWide ? 'Rw' : 'R';
       baseDir = -1;
