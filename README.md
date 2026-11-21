@@ -26,10 +26,8 @@ Visual assets from `public/assets/aistudio/` showcasing the Kubi Studio interfac
 
 | View | Preview |
 | :--- | :--- |
-| **Interactive Cube Workspace** | `![Interactive Cube Workspace](public/assets/aistudio/<workspace-preview>.png)` |
-| **Onboarding & Notation Tooltips** | `![Mini-Bar Onboarding and Notation Tooltips](public/assets/aistudio/<onboarding-preview>.png)` |
-
-> Replace `<workspace-preview>.png` and `<onboarding-preview>.png` with the exact file names inside `public/assets/aistudio/`.
+| **Interactive Cube Workspace** | `![Interactive Cube Workspace](public/assets/aistudio/image_53d05bf8.png)` |
+| **Onboarding & Notation Tooltips** | `![Mini-Bar Onboarding and Notation Tooltips](public/assets/aistudio/image_e389b630.png)` |
 
 ## Key Features
 
