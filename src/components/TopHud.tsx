@@ -78,14 +78,14 @@ export const TopHud: React.FC<TopHudProps> = ({
   return (
     <header
       data-testid="studio-top-hud"
-      className="relative z-20 shrink-0 w-full border-b px-2.5 sm:px-4 pb-1.5 sm:pb-2 kubi-safe-top flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2"
+      className="relative z-20 shrink-0 w-full border-b px-2.5 sm:px-3.5 lg:px-4 pb-1.5 sm:pb-2 kubi-safe-top flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-1.5 sm:gap-2"
       style={{
         backgroundColor: theme.ui.surface,
         borderColor: theme.ui.border,
       }}
     >
-      {/* Row 1 (Mobile) / Left+Right Flex (sm+): Puzzle Selector + Primary Utilities */}
-      <div className="flex items-center justify-between sm:justify-start gap-1.5 sm:gap-2.5 min-w-0">
+      {/* Row 1 (Mobile) / Left Cluster (sm+): Puzzle Selector + Tabular Stats */}
+      <div className="flex items-center justify-between sm:justify-start gap-1.5 sm:gap-2 min-w-0 shrink-0">
         {/* Puzzle Type Switcher */}
         <div
           className="flex items-center gap-0.5 p-0.5 rounded-xl border shrink-0"
@@ -107,7 +107,7 @@ export const TopHud: React.FC<TopHudProps> = ({
                 }}
                 aria-label={`Switch to ${PUZZLE_META[p].label}`}
                 aria-pressed={active}
-                className="h-7 sm:h-8 px-2 max-[380px]:px-1.5 sm:px-2.5 rounded-lg text-[11px] sm:text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+                className="h-7 sm:h-8 px-2 max-[380px]:px-1.5 sm:px-2 lg:px-2.5 rounded-lg text-[11px] sm:text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
                 style={{
                   backgroundColor: active ? theme.ui.accent : 'transparent',
                   color: active ? theme.ui.accentFg : theme.ui.muted,
@@ -119,20 +119,21 @@ export const TopHud: React.FC<TopHudProps> = ({
           })}
         </div>
 
-        {/* Desktop/Tablet Inline Numeric Readouts */}
+        {/* Desktop/Tablet Inline Numeric Readouts — shrink-0 prevents Time 00:00.0 from ever clipping or overlapping */}
         <div
-          className="hidden sm:flex items-center gap-3 px-3 py-1.5 rounded-xl border min-w-0"
+          data-testid="hud-stats-box"
+          className="hidden sm:flex items-center gap-2 lg:gap-3 px-2.5 lg:px-3 py-1.5 rounded-xl border shrink-0 whitespace-nowrap"
           style={{
             backgroundColor: theme.ui.surfaceSubtle,
             borderColor: theme.ui.border,
           }}
         >
-          <div className="flex items-baseline gap-1.5">
+          <div className="flex items-baseline gap-1 lg:gap-1.5 shrink-0">
             <span className="text-[11px] font-medium" style={{ color: theme.ui.muted }}>
               Moves
             </span>
             <span
-              className="font-mono-tabular text-sm font-semibold"
+              className="font-mono-tabular text-xs lg:text-sm font-semibold"
               style={{ color: theme.ui.text }}
               data-testid="move-count-desktop"
             >
@@ -140,14 +141,14 @@ export const TopHud: React.FC<TopHudProps> = ({
             </span>
           </div>
 
-          <span className="w-px h-3.5" style={{ backgroundColor: theme.ui.border }} aria-hidden="true" />
+          <span className="w-px h-3.5 shrink-0" style={{ backgroundColor: theme.ui.border }} aria-hidden="true" />
 
-          <div className="flex items-baseline gap-1.5">
+          <div className="flex items-baseline gap-1 lg:gap-1.5 shrink-0">
             <span className="text-[11px] font-medium" style={{ color: theme.ui.muted }}>
               Time
             </span>
             <span
-              className="font-mono-tabular text-sm font-semibold"
+              className="font-mono-tabular text-xs lg:text-sm font-semibold"
               style={{ color: theme.ui.text }}
               data-testid="timer-display-desktop"
             >
@@ -155,10 +156,10 @@ export const TopHud: React.FC<TopHudProps> = ({
             </span>
           </div>
 
-          <span className="hidden md:inline-block w-px h-3.5" style={{ backgroundColor: theme.ui.border }} aria-hidden="true" />
+          <span className="hidden lg:inline-block w-px h-3.5 shrink-0" style={{ backgroundColor: theme.ui.border }} aria-hidden="true" />
 
           <span
-            className="hidden md:inline text-xs font-medium whitespace-nowrap"
+            className="hidden lg:inline text-xs font-medium whitespace-nowrap shrink-0"
             style={{ color: activeDailyDateKey || isSolved ? theme.ui.accent : theme.ui.muted }}
             data-testid="solve-status-desktop"
           >
@@ -347,10 +348,11 @@ export const TopHud: React.FC<TopHudProps> = ({
         </div>
       </div>
 
-      {/* Desktop/Tablet Right Cluster: Stopwatch/Dashboard + Square Utility Controls */}
-      <div className="hidden sm:flex items-center gap-1.5 shrink-0">
+      {/* Desktop/Tablet Right Cluster: Icon-only Stopwatch/Stats on tablet (640px-1023px), labeled at lg+ */}
+      <div className="hidden sm:flex items-center gap-1.5 shrink-0 ml-auto">
         <div
-          className="flex items-center gap-0.5 p-0.5 rounded-xl border"
+          data-testid="hud-timer-cluster"
+          className="flex items-center gap-0.5 p-0.5 rounded-xl border shrink-0"
           style={{
             backgroundColor: theme.ui.surfaceSubtle,
             borderColor: theme.ui.border,
@@ -365,14 +367,14 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label="Open Speedcube Stopwatch"
             title="Stopwatch & Scrambles (T)"
-            className="h-8 px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            className="h-8 px-2 lg:px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
             style={{
               backgroundColor: theme.ui.accentSoft,
               color: theme.ui.accent,
             }}
           >
             <Timer className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden md:inline">Stopwatch</span>
+            <span className="hidden lg:inline">Stopwatch</span>
           </button>
 
           <button
@@ -384,16 +386,16 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label="Open Timing Dashboard and Graphs"
             title="Timing Dashboard & Graphs"
-            className="h-8 px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            className="h-8 px-2 lg:px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
             style={{ color: theme.ui.text }}
           >
             <BarChart3 className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden md:inline">Stats</span>
+            <span className="hidden lg:inline">Stats</span>
           </button>
         </div>
 
         <div
-          className="flex items-center gap-0.5 p-0.5 rounded-xl border"
+          className="flex items-center gap-0.5 p-0.5 rounded-xl border shrink-0"
           style={{
             backgroundColor: theme.ui.surfaceSubtle,
             borderColor: theme.ui.border,
@@ -475,7 +477,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label={dockCollapsed ? 'Show studio controls panel' : 'Hide studio controls panel'}
             title={dockCollapsed ? 'Show controls (H)' : 'Hide controls (H)'}
-            className="h-8 px-2 rounded-lg flex items-center justify-center gap-1 text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap"
+            className="h-8 px-1.5 xl:px-2 rounded-lg flex items-center justify-center gap-1 text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap"
             style={{
               backgroundColor: dockCollapsed ? theme.ui.accentSoft : 'transparent',
               color: dockCollapsed ? theme.ui.accent : theme.ui.text,
@@ -484,12 +486,12 @@ export const TopHud: React.FC<TopHudProps> = ({
             {dockCollapsed ? (
               <>
                 <PanelRightOpen className="w-4 h-4" />
-                <span className="hidden lg:inline">Show</span>
+                <span className="hidden xl:inline">Show</span>
               </>
             ) : (
               <>
                 <PanelRightClose className="w-4 h-4" />
-                <span className="hidden lg:inline">Hide</span>
+                <span className="hidden xl:inline">Hide</span>
               </>
             )}
           </button>
