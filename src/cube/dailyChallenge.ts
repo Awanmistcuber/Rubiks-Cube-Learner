@@ -294,7 +294,7 @@ export function savePlayerName(name: string): string {
   return clean;
 }
 
-export function loadStudioPref(key: 'theme' | 'puzzle'): string | null {
+export function loadStudioPref(key: 'theme' | 'puzzle' | 'method'): string | null {
   try {
     const raw = localStorage.getItem(STUDIO_PREFS_STORAGE_KEY);
     if (raw) {
@@ -307,7 +307,7 @@ export function loadStudioPref(key: 'theme' | 'puzzle'): string | null {
   return readCookie(`kubi_${key}`);
 }
 
-export function saveStudioPref(key: 'theme' | 'puzzle', value: string): void {
+export function saveStudioPref(key: 'theme' | 'puzzle' | 'method', value: string): void {
   try {
     const raw = localStorage.getItem(STUDIO_PREFS_STORAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {};

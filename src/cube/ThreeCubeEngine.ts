@@ -857,6 +857,22 @@ export class ThreeCubeEngine {
   }
 
   /**
+   * Returns a safe deep-cloned snapshot of the current 3D cubie state array
+   * so state-based method solvers (Beginner, CFOP, Roux, ZZ/ZOLL) inspect exact stickers.
+   */
+  public getCubieStates(): CubieState[] {
+    return this.cubieStates.map((c) => ({
+      ...c,
+      home: [...c.home] as [number, number, number],
+      pos: [...c.pos] as [number, number, number],
+      stickers: { ...c.stickers },
+      dimensions: [...c.dimensions] as [number, number, number],
+      homeCenter: [...c.homeCenter] as [number, number, number],
+      rotMatrix: [...c.rotMatrix] as CubieState['rotMatrix'],
+    }));
+  }
+
+  /**
    * Instantly applies a sequence of setup moves without waiting for animation
    * (used to stage lesson cases cleanly with a crisp morph pop).
    */

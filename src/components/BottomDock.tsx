@@ -1,9 +1,10 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
   Camera,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   CloudRain,
   Compass,
@@ -13,7 +14,9 @@ import {
   Loader2,
   Music,
   Palette,
+  Pause,
   Play,
+  RefreshCw,
   RotateCcw,
   Send,
   Shuffle,
@@ -29,6 +32,12 @@ import {
 import { AMBIENT_SOUNDSCAPES } from '../cube/audio';
 import { ALGORITHM_PRESETS, CURRICULUM } from '../cube/curriculum';
 import { buildThemePaletteFromCustom, type CustomThemeRecord } from '../cube/customThemes';
+import {
+  getActiveMethodProgress,
+  SOLVE_METHOD_LIST,
+  SOLVE_METHODS,
+  type MethodSolvePlan,
+} from '../cube/methodSolver';
 import type { SequenceTrackerState } from '../cube/sequenceTracker';
 import { THEME_LIST } from '../cube/themes';
 import type {
@@ -37,6 +46,7 @@ import type {
   DockTab,
   LessonStep,
   PuzzleType,
+  SolveMethodId,
   ThemePalette,
 } from '../cube/types';
 
@@ -49,11 +59,14 @@ interface BottomDockProps {
   activeTab: DockTab;
   collapsed: boolean;
   isBusy: boolean;
+  isAutoSolving: boolean;
   isSolved: boolean;
   canUndo: boolean;
   hintMove: CubeMove | null;
   explodeAmount: number;
   turnSpeed: number;
+  selectedMethod: SolveMethodId;
+  activeMethodPlan: MethodSolvePlan | null;
   activeLessonId: string;
   lessonTracker: SequenceTrackerState;
   playTracker: SequenceTrackerState;
@@ -65,7 +78,11 @@ interface BottomDockProps {
   onScramble: () => void;
   onUndo: () => void;
   onHint: () => void;
+  onStepSolveMove: () => void;
   onAutoSolve: () => void;
+  onPauseAutoSolve: () => void;
+  onSelectMethod: (method: SolveMethodId) => void;
+  onReplanMethod: () => void;
   onResetCube: () => void;
   onManualMove: (notation: string) => void;
   onTrackPlaySequence: (rawInput: string) => { ok: boolean; message?: string };
@@ -106,11 +123,14 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   activeTab,
   collapsed,
   isBusy,
+  isAutoSolving,
   isSolved,
   canUndo,
   hintMove,
   explodeAmount,
   turnSpeed,
+  selectedMethod,
+  activeMethodPlan,
   activeLessonId,
   lessonTracker,
   playTracker,
@@ -122,7 +142,11 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onScramble,
   onUndo,
   onHint,
+  onStepSolveMove,
   onAutoSolve,
+  onPauseAutoSolve,
+  onSelectMethod,
+  onReplanMethod,
   onResetCube,
   onManualMove,
   onTrackPlaySequence,
@@ -145,17 +169,39 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   const [counterClockwise, setCounterClockwise] = useState(false);
   const [sequenceInput, setSequenceInput] = useState('');
   const [sequenceError, setSequenceError] = useState<string | null>(null);
+  const [lessonMethodFilter, setLessonMethodFilter] = useState<'all' | SolveMethodId>('all');
   const sequenceInputRef = useRef<HTMLInputElement | null>(null);
+  const playRibbonRef = useRef<HTMLDivElement | null>(null);
+  const learnRibbonRef = useRef<HTMLDivElement | null>(null);
 
   const [coachQuery, setCoachQuery] = useState('');
   const [coachAnswer, setCoachAnswer] = useState<string | null>(null);
   const [coachError, setCoachError] = useState<string | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
 
-  const lessons = CURRICULUM[puzzleType] ?? CURRICULUM['3x3'];
-  const activeLesson = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
+  const allLessons = CURRICULUM[puzzleType] ?? CURRICULUM['3x3'];
+  const hasMethodTaggedLessons = allLessons.some((l) => Boolean(l.method));
+  const lessons =
+    hasMethodTaggedLessons && lessonMethodFilter !== 'all'
+      ? allLessons.filter((l) => l.method === lessonMethodFilter)
+      : allLessons;
+  const activeLesson =
+    allLessons.find((l) => l.id === activeLessonId) ?? lessons[0] ?? allLessons[0];
   const presets = ALGORITHM_PRESETS.filter((p) => p.puzzleTypes.includes(puzzleType));
   const lessonStepIndex = lessonTracker.currentIndex;
+
+  const supportsMultiMethod = puzzleType === '3x3' || puzzleType === 'mirror';
+  const methodProgress = getActiveMethodProgress(activeMethodPlan, playTracker.currentIndex);
+
+  // Smoothly keep the active move box visible inside long solve ribbons
+  useEffect(() => {
+    const container = activeTab === 'play' ? playRibbonRef.current : learnRibbonRef.current;
+    if (!container) return;
+    const activeChip = container.querySelector<HTMLElement>('[data-step-active="true"]');
+    if (activeChip) {
+      activeChip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [activeTab, playTracker.currentIndex, lessonTracker.currentIndex]);
 
   const isDark = theme.isDark;
   const correctColors = isDark
@@ -168,10 +214,12 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   const renderNotationRibbon = (
     tracker: SequenceTrackerState,
     keyPrefix: string,
-    testId: string
+    testId: string,
+    ribbonRef: React.RefObject<HTMLDivElement | null>
   ) => {
     return (
       <div
+        ref={ribbonRef}
         className="flex items-center gap-1.5 overflow-x-auto kubi-scroll-x pt-0.5 pb-0.5"
         data-testid={testId}
       >
@@ -362,12 +410,12 @@ export const BottomDock: React.FC<BottomDockProps> = ({
               <div className="flex flex-col gap-2.5">
                 {/* Action Row — Single clean horizontal strip on desktop, tablet, and compact 360px phones */}
                 <div className="flex items-center justify-between gap-1 sm:gap-2">
-                  <div className="flex items-center gap-1 sm:gap-2 min-w-0">
+                  <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
                     <button
                       type="button"
                       disabled={isBusy}
                       onClick={onScramble}
-                      className="h-9 sm:h-10 px-2.5 sm:px-4 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1 sm:gap-1.5 transition-transform duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                      className="h-9 sm:h-10 px-2 sm:px-3.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1 sm:gap-1.5 transition-transform duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
                       style={{
                         backgroundColor: theme.ui.accent,
                         color: theme.ui.accentFg,
@@ -381,7 +429,9 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       type="button"
                       disabled={isBusy || isSolved}
                       onClick={onHint}
-                      className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center gap-1 sm:gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                      aria-label="Step Hint"
+                      title="Show 3D guide arrow for next move"
+                      className="h-9 sm:h-10 w-9 sm:w-auto sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1 sm:gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap shrink-0"
                       style={{
                         backgroundColor: theme.ui.surfaceSubtle,
                         borderColor: theme.ui.border,
@@ -389,25 +439,60 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       }}
                     >
                       <Compass className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
-                      <span className="sm:hidden">Hint</span>
                       <span className="hidden sm:inline">Step Hint</span>
                     </button>
 
                     <button
                       type="button"
+                      data-testid="play-step-move-btn"
                       disabled={isBusy || isSolved}
-                      onClick={onAutoSolve}
-                      className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center gap-1 sm:gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                      onClick={onStepSolveMove}
+                      aria-label="Step next move"
+                      title="Execute one move of the selected solving method"
+                      className="h-9 sm:h-10 w-9 sm:w-auto sm:px-2.5 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap shrink-0"
                       style={{
                         backgroundColor: theme.ui.surfaceSubtle,
                         borderColor: theme.ui.border,
                         color: theme.ui.text,
                       }}
                     >
-                      <Wand2 className="w-3.5 h-3.5 shrink-0" />
-                      <span className="sm:hidden">Solve</span>
-                      <span className="hidden sm:inline">Auto-Solve</span>
+                      <StepForward className="w-3.5 h-3.5 shrink-0" />
+                      <span className="hidden sm:inline">Step</span>
                     </button>
+
+                    {isAutoSolving ? (
+                      <button
+                        type="button"
+                        data-testid="play-pause-solve-btn"
+                        onClick={onPauseAutoSolve}
+                        className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-semibold border flex items-center gap-1 sm:gap-1.5 transition-colors duration-150 cursor-pointer whitespace-nowrap shrink-0"
+                        style={{
+                          backgroundColor: theme.ui.accentSoft,
+                          borderColor: theme.ui.accent,
+                          color: theme.ui.accent,
+                        }}
+                      >
+                        <Pause className="w-3.5 h-3.5 shrink-0" />
+                        <span>Pause</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        data-testid="play-auto-solve-btn"
+                        disabled={isBusy || isSolved}
+                        onClick={onAutoSolve}
+                        className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center gap-1 sm:gap-1.5 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap shrink-0"
+                        style={{
+                          backgroundColor: theme.ui.surfaceSubtle,
+                          borderColor: theme.ui.border,
+                          color: theme.ui.text,
+                        }}
+                      >
+                        <Wand2 className="w-3.5 h-3.5 shrink-0" />
+                        <span className="sm:hidden">Solve</span>
+                        <span className="hidden sm:inline">Auto-Solve</span>
+                      </button>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
@@ -416,7 +501,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       disabled={isBusy || !canUndo}
                       onClick={onUndo}
                       aria-label="Undo last move"
-                      className="h-9 sm:h-10 w-8 sm:w-auto sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                      className="h-9 sm:h-10 w-8 sm:w-auto sm:px-2.5 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap shrink-0"
                       style={{
                         backgroundColor: theme.ui.surfaceSubtle,
                         borderColor: theme.ui.border,
@@ -424,15 +509,15 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       }}
                     >
                       <Undo2 className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Undo</span>
+                      <span className="hidden md:inline">Undo</span>
                     </button>
 
                     <button
                       type="button"
-                      disabled={isBusy}
+                      disabled={isBusy && !isAutoSolving}
                       onClick={onResetCube}
                       aria-label="Reset cube to solved state"
-                      className="h-9 sm:h-10 w-8 sm:w-auto sm:px-3 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                      className="h-9 sm:h-10 w-8 sm:w-auto sm:px-2.5 rounded-xl text-xs sm:text-sm font-medium border flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer whitespace-nowrap shrink-0"
                       style={{
                         backgroundColor: theme.ui.surfaceSubtle,
                         borderColor: theme.ui.border,
@@ -440,9 +525,207 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       }}
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Reset</span>
+                      <span className="hidden md:inline">Reset</span>
                     </button>
                   </div>
+                </div>
+
+                {/* Multi-Method Solver Selector & Live Stage Flow Stepper */}
+                <div
+                  className="flex flex-col gap-1.5 pt-2 border-t"
+                  style={{ borderColor: theme.ui.border }}
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div
+                      className="flex items-center gap-1 overflow-x-auto kubi-scroll-x"
+                      role="group"
+                      aria-label="Solving method"
+                      data-testid="solve-method-selector"
+                    >
+                      <span
+                        className="text-[11px] font-medium mr-0.5 shrink-0 hidden sm:inline"
+                        style={{ color: theme.ui.muted }}
+                      >
+                        Method
+                      </span>
+                      {supportsMultiMethod ? (
+                        SOLVE_METHOD_LIST.map((m) => {
+                          const active = selectedMethod === m.id;
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              data-testid={`method-btn-${m.id}`}
+                              disabled={isBusy}
+                              aria-pressed={active}
+                              onClick={() => onSelectMethod(m.id)}
+                              title={m.tagline}
+                              className="h-7 px-2.5 rounded-lg border text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                              style={{
+                                backgroundColor: active ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
+                                borderColor: active ? theme.ui.accent : theme.ui.border,
+                                color: active ? theme.ui.accent : theme.ui.muted,
+                              }}
+                            >
+                              {m.shortName}
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <span
+                          className="text-[11px] font-medium px-2 py-1 rounded-lg border"
+                          style={{
+                            backgroundColor: theme.ui.surfaceSubtle,
+                            borderColor: theme.ui.border,
+                            color: theme.ui.muted,
+                          }}
+                        >
+                          {puzzleType === '2x2' ? '2×2 Staged Ortega Flow' : '4×4 Staged Reduction Flow'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!isSolved && activeMethodPlan && (
+                        <button
+                          type="button"
+                          data-testid="replan-method-btn"
+                          disabled={isBusy}
+                          onClick={onReplanMethod}
+                          title="Recalculate solve plan from current cube state"
+                          className="h-7 px-2 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1 cursor-pointer disabled:opacity-45"
+                          style={{
+                            backgroundColor: theme.ui.surfaceSubtle,
+                            borderColor: theme.ui.border,
+                            color: theme.ui.muted,
+                          }}
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Re-plan</span>
+                        </button>
+                      )}
+                      {isSolved && supportsMultiMethod && (
+                        <span
+                          className="text-[11px] truncate max-w-[240px] sm:max-w-none"
+                          style={{ color: theme.ui.muted }}
+                        >
+                          {SOLVE_METHODS[selectedMethod].stageSummary}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Live Method Flow Stepper — shows exact stage & sub-algorithm progress */}
+                  {activeMethodPlan && activeMethodPlan.phases.length > 0 && (
+                    <div
+                      className="flex flex-col gap-1.5 p-2 rounded-xl border"
+                      data-testid="method-flow-bar"
+                      style={{
+                        backgroundColor: theme.ui.surfaceSubtle,
+                        borderColor: theme.ui.border,
+                      }}
+                    >
+                      <div className="flex items-center gap-1 overflow-x-auto kubi-scroll-x pb-0.5">
+                        {activeMethodPlan.phases.map((phase, idx) => {
+                          const isSkipped = phase.moves.length === 0;
+                          const isCompleted =
+                            isSkipped ||
+                            methodProgress.isComplete ||
+                            playTracker.currentIndex >= phase.endMoveIndex;
+                          const isCurrent =
+                            !methodProgress.isComplete &&
+                            !isSkipped &&
+                            methodProgress.phaseIndex === idx;
+                          const doneInPhase = isCompleted
+                            ? phase.moves.length
+                            : isCurrent
+                              ? Math.max(0, playTracker.currentIndex - phase.startMoveIndex)
+                              : 0;
+
+                          let bg = theme.ui.surface;
+                          let border = theme.ui.border;
+                          let text = theme.ui.muted;
+                          if (isCurrent) {
+                            bg = theme.ui.accent;
+                            border = theme.ui.accent;
+                            text = theme.ui.accentFg;
+                          } else if (isCompleted) {
+                            bg = correctColors.bg;
+                            border = correctColors.border;
+                            text = correctColors.text;
+                          }
+
+                          return (
+                            <React.Fragment key={phase.id}>
+                              {idx > 0 && (
+                                <ChevronRight
+                                  className="w-3 h-3 shrink-0 opacity-45"
+                                  style={{ color: theme.ui.muted }}
+                                  aria-hidden="true"
+                                />
+                              )}
+                              <div
+                                data-phase-id={phase.id}
+                                data-phase-status={
+                                  isCurrent ? 'active' : isCompleted ? 'completed' : 'upcoming'
+                                }
+                                title={`${phase.name}: ${phase.algorithmName}`}
+                                className="px-2 py-1 rounded-lg border text-[11px] font-semibold inline-flex items-center gap-1 shrink-0 whitespace-nowrap transition-colors duration-150"
+                                style={{
+                                  backgroundColor: bg,
+                                  borderColor: border,
+                                  color: text,
+                                }}
+                              >
+                                {isCompleted && !isCurrent && (
+                                  <Check className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                )}
+                                <span>{phase.shortName}</span>
+                                <span className="font-mono-tabular text-[10px] opacity-85">
+                                  {isSkipped
+                                    ? 'Skip'
+                                    : isCurrent
+                                      ? `${doneInPhase}/${phase.moves.length}`
+                                      : `${phase.moves.length}`}
+                                </span>
+                              </div>
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+
+                      {/* Active Stage & Algorithm Insight Cue */}
+                      {methodProgress.phase && (
+                        <div
+                          className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-[11px]"
+                          data-testid="method-flow-active-detail"
+                        >
+                          <span className="font-semibold" style={{ color: theme.ui.text }}>
+                            {methodProgress.isComplete ? (
+                              <span style={{ color: correctColors.text }}>
+                                {activeMethodPlan.methodName} Complete
+                              </span>
+                            ) : (
+                              <>
+                                <span style={{ color: theme.ui.accent }}>
+                                  {methodProgress.phase.name}
+                                </span>
+                                {' · '}
+                                <span>
+                                  {methodProgress.subStep
+                                    ? methodProgress.subStep.label
+                                    : methodProgress.phase.algorithmName}
+                                </span>
+                              </>
+                            )}
+                          </span>
+                          <span className="truncate max-w-full" style={{ color: theme.ui.muted }}>
+                            {methodProgress.phase.description}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Live Scramble / Sequence Notation Tracker */}
@@ -494,7 +777,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       </button>
                     </form>
 
-                    {hasLastScramble && playTrackerLabel === 'Solve Guide' && (
+                    {hasLastScramble && activeMethodPlan !== null && (
                       <button
                         type="button"
                         disabled={isBusy}
@@ -605,7 +888,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         )}
                       </div>
 
-                      {renderNotationRibbon(playTracker, 'play-seq', 'play-sequence-ribbon')}
+                      {renderNotationRibbon(playTracker, 'play-seq', 'play-sequence-ribbon', playRibbonRef)}
                     </div>
                   )}
                 </div>
@@ -747,11 +1030,56 @@ export const BottomDock: React.FC<BottomDockProps> = ({
 
             {/* 2. LEARN CURRICULUM TAB */}
             {activeTab === 'learn' && activeLesson && (
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2.5">
+                {/* Method Filter Bar (3x3 method-curated algorithms) */}
+                {hasMethodTaggedLessons && (
+                  <div
+                    className="flex items-center gap-1 overflow-x-auto kubi-scroll-x"
+                    role="group"
+                    aria-label="Filter lessons by solving method"
+                    data-testid="learn-method-filters"
+                  >
+                    {(
+                      [
+                        { id: 'all', label: 'All Methods' },
+                        ...SOLVE_METHOD_LIST.map((m) => ({ id: m.id, label: m.shortName })),
+                      ] as const
+                    ).map((item) => {
+                      const selected = lessonMethodFilter === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          data-testid={`learn-filter-${item.id}`}
+                          onClick={() => {
+                            setLessonMethodFilter(item.id);
+                            const nextList =
+                              item.id === 'all'
+                                ? allLessons
+                                : allLessons.filter((l) => l.method === item.id);
+                            if (nextList.length > 0 && !nextList.some((l) => l.id === activeLesson.id)) {
+                              onSelectLesson(nextList[0]);
+                            }
+                          }}
+                          className="h-7 px-2.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+                          style={{
+                            backgroundColor: selected ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
+                            borderColor: selected ? theme.ui.accent : theme.ui.border,
+                            color: selected ? theme.ui.accent : theme.ui.muted,
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {/* Lesson Stage Selector */}
                 <div className="flex items-center gap-1.5 overflow-x-auto kubi-scroll-x pb-0.5">
                   {lessons.map((lesson) => {
                     const selected = lesson.id === activeLesson.id;
+                    const prefix = lesson.stageNumber < 10 ? `0${lesson.stageNumber}` : String(lesson.stageNumber);
                     return (
                       <button
                         key={lesson.id}
@@ -764,7 +1092,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                           color: selected ? theme.ui.accent : theme.ui.muted,
                         }}
                       >
-                        0{lesson.stageNumber}. {lesson.title}
+                        {prefix}. {lesson.title}
                       </button>
                     );
                   })}
@@ -884,7 +1212,8 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                           expectedOnWrong: null,
                         },
                     activeLesson.id,
-                    'learn-sequence-ribbon'
+                    'learn-sequence-ribbon',
+                    learnRibbonRef
                   )}
                 </div>
               </div>

@@ -12,6 +12,8 @@ export type GameState = 'title' | 'playing' | 'paused' | 'gameover';
 
 export type DockTab = 'play' | 'learn' | 'lab' | 'coach';
 
+export type SolveMethodId = 'beginner' | 'cfop' | 'roux' | 'zz';
+
 export interface CubeMove {
   axis: Axis;
   /** Layer indices in integer coordinates relative to center (e.g., -1, 0, 1 for 3x3; -1.5, -0.5, 0.5, 1.5 for 4x4) */
@@ -51,6 +53,8 @@ export interface LessonStep {
   subtitle: string;
   goal: string;
   tip: string;
+  /** Optional speedcubing method association (Beginner, CFOP, Roux, ZZ/ZOLL) */
+  method?: SolveMethodId;
   /** Moves applied from solved state to stage this exact case on the 3D cube */
   setupMoves: string[];
   /** Algorithm moves the learner steps through or plays */
@@ -62,7 +66,7 @@ export interface LessonStep {
 export interface AlgorithmPreset {
   id: string;
   name: string;
-  category: 'Trigger' | 'OLL' | 'PLL' | 'Pattern' | 'Parity';
+  category: 'Trigger' | 'F2L' | 'OLL' | 'PLL' | 'Roux' | 'ZZ' | 'Pattern' | 'Parity';
   puzzleTypes: PuzzleType[];
   notation: string[];
   description: string;

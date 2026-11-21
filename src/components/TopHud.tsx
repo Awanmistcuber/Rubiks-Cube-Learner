@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart3, Camera, Eye, EyeOff, Pause, RotateCcw, Timer, Volume2, VolumeX } from 'lucide-react';
+import { BarChart3, Camera, Eye, EyeOff, Keyboard, Pause, RotateCcw, Timer, Volume2, VolumeX } from 'lucide-react';
 import { PUZZLE_META } from '../cube/curriculum';
 import type { PuzzleType, ThemePalette } from '../cube/types';
 
@@ -13,6 +13,7 @@ interface TopHudProps {
   activeDailyDateKey?: string | null;
   isMuted: boolean;
   dockCollapsed: boolean;
+  shortcutsOpen: boolean;
   onSelectPuzzle: (p: PuzzleType) => void;
   onOpenStopwatch: () => void;
   onOpenDashboard: () => void;
@@ -20,6 +21,7 @@ interface TopHudProps {
   onResetCamera: () => void;
   onToggleMute: () => void;
   onToggleDock: () => void;
+  onToggleShortcuts: () => void;
   onPause: () => void;
 }
 
@@ -43,6 +45,7 @@ export const TopHud: React.FC<TopHudProps> = ({
   activeDailyDateKey,
   isMuted,
   dockCollapsed,
+  shortcutsOpen,
   onSelectPuzzle,
   onOpenStopwatch,
   onOpenDashboard,
@@ -50,6 +53,7 @@ export const TopHud: React.FC<TopHudProps> = ({
   onResetCamera,
   onToggleMute,
   onToggleDock,
+  onToggleShortcuts,
   onPause,
 }) => {
   return (
@@ -145,9 +149,9 @@ export const TopHud: React.FC<TopHudProps> = ({
       </div>
 
       {/* Top-Right Cluster: Stopwatch/Dashboard Launcher + Square Tactile Utility Controls */}
-      <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <div className="pointer-events-auto flex items-center gap-1 sm:gap-2 shrink-0">
         <div
-          className="flex items-center gap-1 p-1 rounded-xl border"
+          className="flex items-center gap-0.5 sm:gap-1 p-1 rounded-xl border"
           style={{
             backgroundColor: theme.ui.surface,
             borderColor: theme.ui.border,
@@ -163,7 +167,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label="Open Speedcube Stopwatch"
             title="Stopwatch & Scrambles (T)"
-            className="h-8 sm:h-10 px-2 sm:px-3 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            className="h-8 sm:h-10 px-1.5 sm:px-3 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
             style={{
               backgroundColor: theme.ui.accentSoft,
               color: theme.ui.accent,
@@ -182,7 +186,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label="Open Timing Dashboard and Graphs"
             title="Timing Dashboard & Graphs"
-            className="h-8 sm:h-10 px-2 sm:px-3 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            className="h-8 sm:h-10 px-1.5 sm:px-3 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
             style={{ color: theme.ui.text }}
           >
             <BarChart3 className="w-4 h-4 shrink-0" />
@@ -262,13 +266,33 @@ export const TopHud: React.FC<TopHudProps> = ({
           <button
             type="button"
             tabIndex={-1}
+            data-testid="toggle-shortcuts-btn"
+            aria-pressed={shortcutsOpen}
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onToggleShortcuts();
+            }}
+            aria-label={shortcutsOpen ? 'Hide keyboard shortcuts' : 'Show keyboard shortcuts'}
+            title="Keyboard shortcuts (?)"
+            className="w-7 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center transition-colors duration-150 cursor-pointer"
+            style={{
+              backgroundColor: shortcutsOpen ? theme.ui.accentSoft : 'transparent',
+              color: shortcutsOpen ? theme.ui.accent : theme.ui.text,
+            }}
+          >
+            <Keyboard className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            tabIndex={-1}
             onClick={(e) => {
               e.currentTarget.blur();
               onPause();
             }}
             aria-label="Pause studio"
             title="Pause (Esc or P)"
-            className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center transition-colors duration-150 cursor-pointer"
+            className="w-7 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center transition-colors duration-150 cursor-pointer"
             style={{ color: theme.ui.text }}
           >
             <Pause className="w-4 h-4" />

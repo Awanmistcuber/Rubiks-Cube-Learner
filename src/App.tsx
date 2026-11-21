@@ -3,6 +3,7 @@ import { Camera } from 'lucide-react';
 import { BottomDock } from './components/BottomDock';
 import { PauseModal, VictoryModal } from './components/Modals';
 import { PaletteStudioModal } from './components/PaletteStudioModal';
+import { ShortcutsHelpOverlay } from './components/ShortcutsHelpOverlay';
 import { TimerDashboardModal, type TimerDashboardTab } from './components/TimerDashboardModal';
 import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
@@ -51,6 +52,11 @@ import {
   parseNotationSequenceInput,
   type SequenceTrackerState,
 } from './cube/sequenceTracker';
+import {
+  SOLVE_METHODS,
+  solveCubeWithMethod,
+  type MethodSolvePlan,
+} from './cube/methodSolver';
 import { buildSnapshotFilename, triggerPngDownload } from './cube/snapshot';
 import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
 import {
@@ -67,6 +73,7 @@ import type {
   GameState,
   LessonStep,
   PuzzleType,
+  SolveMethodId,
   SolveSnapshot,
   ThemePalette,
 } from './cube/types';
@@ -96,6 +103,7 @@ function writeBestTime(puzzle: PuzzleType, ms: number) {
 }
 
 const VALID_PUZZLES_SET = new Set<PuzzleType>(['2x2', '3x3', '4x4', 'mirror']);
+const VALID_METHODS_SET = new Set<SolveMethodId>(['beginner', 'cfop', 'roux', 'zz']);
 
 export default function App() {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
@@ -125,6 +133,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<DockTab>('play');
   const [dockCollapsed, setDockCollapsed] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [explodeAmount, setExplodeAmount] = useState(0);
   const [turnSpeed, setTurnSpeed] = useState(1.1);
@@ -146,7 +155,14 @@ export default function App() {
   const [solveRecords, setSolveRecords] = useState<SolveRecord[]>(() => loadSolveRecords());
   const [activeDailyDateKey, setActiveDailyDateKey] = useState<string | null>(null);
 
-  // Curriculum Lesson & Play Sequence Trackers
+  // Curriculum Lesson, Multi-Method Solver & Play Sequence Trackers
+  const [selectedMethod, setSelectedMethod] = useState<SolveMethodId>(() => {
+    const saved = loadStudioPref('method') as SolveMethodId | null;
+    return saved && VALID_METHODS_SET.has(saved) ? saved : 'cfop';
+  });
+  const [activeMethodPlan, setActiveMethodPlan] = useState<MethodSolvePlan | null>(null);
+  const [isAutoSolving, setIsAutoSolving] = useState(false);
+
   const [activeLessonId, setActiveLessonId] = useState<string>(CURRICULUM['3x3'][0].id);
   const [lessonTracker, setLessonTracker] = useState<SequenceTrackerState>(() =>
     createSequenceTracker(CURRICULUM['3x3'][0].algorithm)
@@ -161,13 +177,17 @@ export default function App() {
   const historyRef = useRef<CubeMove[]>([]);
   const currentScrambleRef = useRef<string>('');
   const lastScrambleTokensRef = useRef<string[]>([]);
+  const selectedMethodRef = useRef<SolveMethodId>(selectedMethod);
+  const activeMethodPlanRef = useRef<MethodSolvePlan | null>(activeMethodPlan);
   const lessonTrackerRef = useRef<SequenceTrackerState>(lessonTracker);
   const playTrackerRef = useRef<SequenceTrackerState>(playTracker);
   const playTrackerLabelRef = useRef<string>(playTrackerLabel);
   const isUndoingWrongRef = useRef<boolean>(false);
+  const isSteppingMethodRef = useRef<boolean>(false);
   const activeDailyRef = useRef<{ dateKey: string; puzzleType: PuzzleType; scramble: string } | null>(null);
   const timerModalOpenRef = useRef<boolean>(false);
   const paletteStudioOpenRef = useRef<boolean>(false);
+  const shortcutsOpenRef = useRef<boolean>(false);
   const puzzleRef = useRef<PuzzleType>(puzzleType);
   const gameStateRef = useRef<GameState>(gameState);
   const hasScrambledRef = useRef(false);
@@ -182,9 +202,12 @@ export default function App() {
   puzzleRef.current = puzzleType;
   gameStateRef.current = gameState;
   activeTabRef.current = activeTab;
+  selectedMethodRef.current = selectedMethod;
+  activeMethodPlanRef.current = activeMethodPlan;
   playTrackerLabelRef.current = playTrackerLabel;
   timerModalOpenRef.current = timerModalTab !== null;
   paletteStudioOpenRef.current = paletteStudioOpen;
+  shortcutsOpenRef.current = shortcutsOpen;
 
   useEffect(() => {
     saveSolveRecords(solveRecords);
@@ -270,9 +293,34 @@ export default function App() {
 
           setIsSolved(solvedNow);
 
-          // Live sequence tracking & immediate 3D guide arrow progression in Learn and Play & Solve
+          // Live sequence & method-flow tracking in Learn, Play & Solve, and Auto-Solve!
           let handledGuideArrow = false;
-          if (!isFromQueue && !isScramblingRef.current) {
+          if (
+            !isScramblingRef.current &&
+            (isAutoSolvingRef.current ||
+              isSteppingMethodRef.current ||
+              (isFromQueue && activeTabRef.current === 'play' && activeMethodPlanRef.current !== null))
+          ) {
+            isSteppingMethodRef.current = false;
+            if (playTrackerRef.current.tokens.length > 0) {
+              const nextTracker = advanceSequenceStep(playTrackerRef.current);
+              playTrackerRef.current = nextTracker;
+              setPlayTracker(nextTracker);
+
+              if (!isAutoSolvingRef.current) {
+                const nextToken = getNextExpectedToken(nextTracker);
+                if (nextToken) {
+                  const nextMove = parseNotation(nextToken, puzzleRef.current);
+                  setHintMove(nextMove);
+                  engine.showGuideArrow(nextMove);
+                } else {
+                  setHintMove(null);
+                  engine.clearGuideArrow();
+                }
+                handledGuideArrow = true;
+              }
+            }
+          } else if (!isFromQueue && !isScramblingRef.current) {
             if (activeTabRef.current === 'learn' && lessonTrackerRef.current.tokens.length > 0) {
               const nextTracker = isUndoingWrongRef.current
                 ? clearSequenceWrongState(lessonTrackerRef.current)
@@ -299,19 +347,19 @@ export default function App() {
               playTrackerRef.current = nextTracker;
               setPlayTracker(nextTracker);
 
-              // Auto-advance the 3D guide arrow for user-tracked sequences and manual scramble practice
-              if (playTrackerLabelRef.current !== 'Solve Guide') {
-                const nextToken = getNextExpectedToken(nextTracker);
-                if (nextToken) {
-                  const nextMove = parseNotation(nextToken, puzzleRef.current);
-                  setHintMove(nextMove);
+              // Auto-advance the 3D guide arrow for active method plans, tracked sequences, & scramble practice
+              const nextToken = getNextExpectedToken(nextTracker);
+              if (nextToken) {
+                const nextMove = parseNotation(nextToken, puzzleRef.current);
+                setHintMove(nextMove);
+                if (playTrackerLabelRef.current !== 'Solve Guide' || activeMethodPlanRef.current !== null) {
                   engine.showGuideArrow(nextMove);
-                } else {
-                  setHintMove(null);
-                  engine.clearGuideArrow();
                 }
-                handledGuideArrow = true;
+              } else {
+                setHintMove(null);
+                engine.clearGuideArrow();
               }
+              handledGuideArrow = true;
             } else {
               isUndoingWrongRef.current = false;
             }
@@ -370,6 +418,7 @@ export default function App() {
             hasScrambledRef.current = false;
             setHasScrambled(false);
             isAutoSolvingRef.current = false;
+            setIsAutoSolving(false);
             setIsBusy(false);
 
             engine.triggerVictoryCelebration();
@@ -441,15 +490,24 @@ export default function App() {
             setElapsedMs(0);
 
             if (!solvedNow) {
-              const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
-              const nextPlayTracker = createSequenceTracker(solution.map((m) => m.notation));
+              const plan = solveCubeWithMethod(
+                engine.getCubieStates(),
+                selectedMethodRef.current,
+                puzzleRef.current,
+                historyRef.current
+              );
+              activeMethodPlanRef.current = plan;
+              setActiveMethodPlan(plan);
+              const nextPlayTracker = createSequenceTracker(plan.allMoves.map((m) => m.notation));
               playTrackerRef.current = nextPlayTracker;
               setPlayTracker(nextPlayTracker);
-              playTrackerLabelRef.current = 'Solve Guide';
-              setPlayTrackerLabel('Solve Guide');
+              const label = `${plan.methodName} Solve`;
+              playTrackerLabelRef.current = label;
+              setPlayTrackerLabel(label);
             }
           }
           isAutoSolvingRef.current = false;
+          setIsAutoSolving(false);
           setIsBusy(false);
         },
       },
@@ -502,8 +560,13 @@ export default function App() {
     setHintMove(null);
     isScramblingRef.current = false;
     isAutoSolvingRef.current = false;
+    setIsAutoSolving(false);
     isUndoingWrongRef.current = false;
+    isSteppingMethodRef.current = false;
     setIsBusy(false);
+
+    activeMethodPlanRef.current = null;
+    setActiveMethodPlan(null);
 
     const lessons = CURRICULUM[puzzleRef.current] ?? CURRICULUM['3x3'];
     const defaultLesson = lessons[0];
@@ -893,6 +956,8 @@ export default function App() {
         };
       }
       cubeAudio.playUiTick();
+      activeMethodPlanRef.current = null;
+      setActiveMethodPlan(null);
       const next = createSequenceTracker(tokens);
       playTrackerRef.current = next;
       setPlayTracker(next);
@@ -937,18 +1002,37 @@ export default function App() {
   const handleResetPlayTracker = useCallback(() => {
     if (playTrackerRef.current.tokens.length === 0) return;
     cubeAudio.playUiTick();
+    if (activeMethodPlanRef.current && engineRef.current) {
+      // Re-plan cleanly from the live 3D state for the active method!
+      const plan = solveCubeWithMethod(
+        engineRef.current.getCubieStates(),
+        selectedMethodRef.current,
+        puzzleRef.current,
+        historyRef.current
+      );
+      activeMethodPlanRef.current = plan;
+      setActiveMethodPlan(plan);
+      const fresh = createSequenceTracker(plan.allMoves.map((m) => m.notation));
+      playTrackerRef.current = fresh;
+      setPlayTracker(fresh);
+      const firstMove = plan.allMoves[0] ?? null;
+      setHintMove(firstMove);
+      if (firstMove) engineRef.current.showGuideArrow(firstMove);
+      else engineRef.current.clearGuideArrow();
+      return;
+    }
     const restarted = createSequenceTracker(playTrackerRef.current.tokens);
     playTrackerRef.current = restarted;
     setPlayTracker(restarted);
-    if (playTrackerLabelRef.current !== 'Solve Guide') {
-      const firstMove = parseNotation(restarted.tokens[0], puzzleRef.current);
-      setHintMove(firstMove);
-      engineRef.current?.showGuideArrow(firstMove);
-    }
+    const firstMove = parseNotation(restarted.tokens[0], puzzleRef.current);
+    setHintMove(firstMove);
+    engineRef.current?.showGuideArrow(firstMove);
   }, []);
 
   const handleClearPlayTracker = useCallback(() => {
     cubeAudio.playUiTick();
+    activeMethodPlanRef.current = null;
+    setActiveMethodPlan(null);
     const empty = createSequenceTracker([]);
     playTrackerRef.current = empty;
     setPlayTracker(empty);
@@ -958,29 +1042,161 @@ export default function App() {
     engineRef.current?.clearGuideArrow();
   }, []);
 
+  const buildFreshMethodPlan = useCallback(
+    (methodId: SolveMethodId, showArrow = false): MethodSolvePlan | null => {
+      const engine = engineRef.current;
+      if (!engine) return null;
+      const plan = solveCubeWithMethod(
+        engine.getCubieStates(),
+        methodId,
+        puzzleRef.current,
+        historyRef.current
+      );
+      if (plan.totalMoves === 0) {
+        activeMethodPlanRef.current = null;
+        setActiveMethodPlan(null);
+        return null;
+      }
+      activeMethodPlanRef.current = plan;
+      setActiveMethodPlan(plan);
+      const tracker = createSequenceTracker(plan.allMoves.map((m) => m.notation));
+      playTrackerRef.current = tracker;
+      setPlayTracker(tracker);
+      const label = `${SOLVE_METHODS[methodId].shortName} Solve`;
+      playTrackerLabelRef.current = label;
+      setPlayTrackerLabel(label);
+
+      if (showArrow && plan.allMoves[0]) {
+        setHintMove(plan.allMoves[0]);
+        engine.showGuideArrow(plan.allMoves[0]);
+      } else {
+        setHintMove(null);
+        engine.clearGuideArrow();
+      }
+      return plan;
+    },
+    []
+  );
+
+  const handleSelectMethod = useCallback(
+    (nextMethod: SolveMethodId) => {
+      if (isBusy) return;
+      cubeAudio.playUiTick();
+      setSelectedMethod(nextMethod);
+      selectedMethodRef.current = nextMethod;
+      saveStudioPref('method', nextMethod);
+      if (!isSolved) {
+        buildFreshMethodPlan(nextMethod, true);
+      }
+    },
+    [buildFreshMethodPlan, isBusy, isSolved]
+  );
+
+  const handleReplanMethod = useCallback(() => {
+    if (isBusy || isSolved) return;
+    cubeAudio.playUiTick();
+    buildFreshMethodPlan(selectedMethodRef.current, true);
+  }, [buildFreshMethodPlan, isBusy, isSolved]);
+
   const handleHint = useCallback(() => {
     const engine = engineRef.current;
-    if (!engine || isBusy) return;
-    const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
-    if (solution.length === 0) return;
-    const next = solution[0];
+    if (!engine || isBusy || isSolved) return;
     cubeAudio.playUiTick();
-    setHintMove(next);
-    engine.showGuideArrow(next);
-  }, [isBusy]);
+
+    // If an active method plan is on track, hint its exact next move; otherwise plan fresh!
+    const currPlan = activeMethodPlanRef.current;
+    const currTracker = playTrackerRef.current;
+    if (
+      currPlan &&
+      currTracker.lastWrongNotation === null &&
+      currTracker.currentIndex < currPlan.allMoves.length
+    ) {
+      const next = currPlan.allMoves[currTracker.currentIndex];
+      setHintMove(next);
+      engine.showGuideArrow(next);
+      return;
+    }
+
+    const freshPlan = buildFreshMethodPlan(selectedMethodRef.current, true);
+    if (!freshPlan) {
+      const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
+      if (solution.length === 0) return;
+      setHintMove(solution[0]);
+      engine.showGuideArrow(solution[0]);
+    }
+  }, [buildFreshMethodPlan, isBusy, isSolved]);
+
+  const handleStepSolveMove = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine || isBusy || isSolved) return;
+    cubeAudio.playUiTick();
+
+    let plan = activeMethodPlanRef.current;
+    let tracker = playTrackerRef.current;
+
+    if (
+      !plan ||
+      tracker.lastWrongNotation !== null ||
+      tracker.currentIndex >= plan.allMoves.length
+    ) {
+      plan = buildFreshMethodPlan(selectedMethodRef.current, false);
+      tracker = playTrackerRef.current;
+    }
+    if (!plan || tracker.currentIndex >= plan.allMoves.length) return;
+
+    const nextMove = plan.allMoves[tracker.currentIndex];
+    isSteppingMethodRef.current = true;
+    engine.enqueueMove(nextMove, true, 1.0);
+  }, [buildFreshMethodPlan, isBusy, isSolved]);
+
+  const handlePauseAutoSolve = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine || !isAutoSolvingRef.current) return;
+    cubeAudio.playUiTick();
+    engine.clearQueue();
+    isAutoSolvingRef.current = false;
+    setIsAutoSolving(false);
+    setIsBusy(false);
+
+    // Show 3D guide arrow on the exact move where the learner paused!
+    const nextToken = getNextExpectedToken(playTrackerRef.current);
+    if (nextToken) {
+      const nextMove = parseNotation(nextToken, puzzleRef.current);
+      setHintMove(nextMove);
+      engine.showGuideArrow(nextMove);
+    }
+  }, []);
 
   const handleAutoSolve = useCallback(() => {
     const engine = engineRef.current;
-    if (!engine || isBusy) return;
-    const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
-    if (solution.length === 0) return;
+    if (!engine || isBusy || isSolved) return;
     cubeAudio.playUiTick();
+
+    let plan = activeMethodPlanRef.current;
+    let tracker = playTrackerRef.current;
+    const canResumeCurrentPlan =
+      plan !== null &&
+      plan.methodId === selectedMethodRef.current &&
+      tracker.lastWrongNotation === null &&
+      tracker.currentIndex < plan.allMoves.length;
+
+    if (!canResumeCurrentPlan) {
+      plan = buildFreshMethodPlan(selectedMethodRef.current, false);
+      tracker = playTrackerRef.current;
+    }
+
+    const remaining = plan
+      ? plan.allMoves.slice(tracker.currentIndex)
+      : computeSolutionFromHistory(historyRef.current, puzzleRef.current);
+    if (remaining.length === 0) return;
+
     engine.clearGuideArrow();
     setHintMove(null);
     isAutoSolvingRef.current = true;
+    setIsAutoSolving(true);
     setIsBusy(true);
-    engine.enqueueMoves(solution, 1.85);
-  }, [isBusy]);
+    engine.enqueueMoves(remaining, 1.55);
+  }, [buildFreshMethodPlan, isBusy, isSolved]);
 
   const handleResetCube = useCallback(() => {
     const engine = engineRef.current;
@@ -1132,7 +1348,18 @@ export default function App() {
 
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      if (e.key === 'Escape' || e.key.toLowerCase() === 'p') {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (shortcutsOpenRef.current) {
+          setShortcutsOpen(false);
+          return;
+        }
+        if (gameStateRef.current === 'playing') setGameState('paused');
+        else if (gameStateRef.current === 'paused') setGameState('playing');
+        return;
+      }
+
+      if (e.key.toLowerCase() === 'p') {
         e.preventDefault();
         if (gameStateRef.current === 'playing') setGameState('paused');
         else if (gameStateRef.current === 'paused') setGameState('playing');
@@ -1140,6 +1367,12 @@ export default function App() {
       }
 
       if (gameStateRef.current !== 'playing') return;
+
+      if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+        e.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+        return;
+      }
 
       if (e.key === 'Backspace') {
         e.preventDefault();
@@ -1212,6 +1445,7 @@ export default function App() {
             activeDailyDateKey={activeDailyDateKey}
             isMuted={isMuted}
             dockCollapsed={dockCollapsed}
+            shortcutsOpen={shortcutsOpen}
             onSelectPuzzle={handleSelectPuzzle}
             onOpenStopwatch={() => {
               cubeAudio.playUiTick();
@@ -1225,8 +1459,25 @@ export default function App() {
             onResetCamera={() => engineRef.current?.resetCamera()}
             onToggleMute={handleToggleMute}
             onToggleDock={() => setDockCollapsed((p) => !p)}
+            onToggleShortcuts={() => {
+              cubeAudio.playUiTick();
+              setShortcutsOpen((p) => !p);
+            }}
             onPause={() => setGameState('paused')}
           />
+
+          {shortcutsOpen && gameState === 'playing' && !paletteStudioOpen && timerModalTab === null && (
+            <ShortcutsHelpOverlay
+              theme={theme}
+              puzzleType={puzzleType}
+              isBusy={isBusy}
+              onTryMove={handleManualMove}
+              onClose={() => {
+                cubeAudio.playUiTick();
+                setShortcutsOpen(false);
+              }}
+            />
+          )}
 
           {!paletteStudioOpen && (
             <BottomDock
@@ -1238,11 +1489,14 @@ export default function App() {
               activeTab={activeTab}
               collapsed={dockCollapsed}
               isBusy={isBusy}
+              isAutoSolving={isAutoSolving}
               isSolved={isSolved}
               canUndo={historyRef.current.length > 0}
               hintMove={hintMove}
               explodeAmount={explodeAmount}
               turnSpeed={turnSpeed}
+              selectedMethod={selectedMethod}
+              activeMethodPlan={activeMethodPlan}
               activeLessonId={activeLessonId}
               lessonTracker={lessonTracker}
               playTracker={playTracker}
@@ -1267,10 +1521,7 @@ export default function App() {
                     }
                   }
                 } else if (tab === 'play') {
-                  if (
-                    playTrackerRef.current.tokens.length > 0 &&
-                    playTrackerLabelRef.current !== 'Solve Guide'
-                  ) {
+                  if (playTrackerRef.current.tokens.length > 0) {
                     const nextToken = getNextExpectedToken(playTrackerRef.current);
                     const nextMove = nextToken ? parseNotation(nextToken, puzzleRef.current) : null;
                     setHintMove(nextMove);
@@ -1286,7 +1537,11 @@ export default function App() {
               onScramble={handleScramble}
               onUndo={handleUndo}
               onHint={handleHint}
+              onStepSolveMove={handleStepSolveMove}
               onAutoSolve={handleAutoSolve}
+              onPauseAutoSolve={handlePauseAutoSolve}
+              onSelectMethod={handleSelectMethod}
+              onReplanMethod={handleReplanMethod}
               onResetCube={handleResetCube}
               onManualMove={handleManualMove}
               onTrackPlaySequence={handleTrackPlaySequence}
