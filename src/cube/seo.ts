@@ -1,6 +1,6 @@
 import type { PuzzleType } from './types';
 
-export type SeoViewId = 'home' | 'tutorials' | 'timer' | 'solver' | 'daily';
+export type SeoViewId = 'home' | 'tutorials' | 'timer' | 'solver' | 'daily' | 'arena';
 
 export interface SeoMetadata {
   view: SeoViewId;
@@ -12,12 +12,13 @@ export interface SeoMetadata {
 export interface InitialSeoRoute {
   view: SeoViewId;
   puzzle?: PuzzleType;
+  roomCode?: string;
   autoStart: boolean;
 }
 
 export const SITE_CANONICAL_BASE = 'https://awanmistcuber.github.io/Rubiks-Cube-Learner/';
 
-const VALID_VIEWS = new Set<SeoViewId>(['home', 'tutorials', 'timer', 'solver', 'daily']);
+const VALID_VIEWS = new Set<SeoViewId>(['home', 'tutorials', 'timer', 'solver', 'daily', 'arena']);
 const VALID_PUZZLES = new Set<PuzzleType>(['2x2', '3x3', '4x4', 'mirror']);
 
 const VIEW_METADATA: Record<SeoViewId, { title: string; description: string }> = {
@@ -46,21 +47,29 @@ const VIEW_METADATA: Record<SeoViewId, { title: string; description: string }> =
     description:
       'Compete on the official daily UTC speedcubing scramble for 2x2, 3x3, 4x4, and Mirror cubes using the built-in stopwatch or interactive 3D cube.',
   },
+  arena: {
+    title: '1v1 Speedcubing Arena – Live Video Cube Battles | Kubi',
+    description:
+      "Compete 1v1 online in live Rubik's Cube battles with side-by-side webcam video & audio, shared WCA scrambles, independent timers, and matchmaking.",
+  },
 };
 
 /**
- * Parses URL search parameters into a clean initial Studio view & puzzle target.
+ * Parses URL search parameters into a clean initial Studio view, puzzle, or private room invite.
  */
 export function parseInitialSeoRoute(search: string): InitialSeoRoute {
   const params = new URLSearchParams(search);
-  const rawView = (params.get('view') ?? 'home').toLowerCase() as SeoViewId;
+  const rawRoom = (params.get('room') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  const roomCode = rawRoom.length >= 4 ? rawRoom : undefined;
+
+  const rawView = (params.get('view') ?? (roomCode ? 'arena' : 'home')).toLowerCase() as SeoViewId;
   const view: SeoViewId = VALID_VIEWS.has(rawView) ? rawView : 'home';
 
   const rawPuzzle = (params.get('puzzle') ?? '').toLowerCase() as PuzzleType;
   const puzzle = VALID_PUZZLES.has(rawPuzzle) ? rawPuzzle : undefined;
 
-  const autoStart = params.get('autostart') === '1' || view !== 'home';
-  return { view, puzzle, autoStart };
+  const autoStart = params.get('autostart') === '1' || view !== 'home' || Boolean(roomCode);
+  return roomCode ? { view, puzzle, roomCode, autoStart } : { view, puzzle, autoStart };
 }
 
 /**

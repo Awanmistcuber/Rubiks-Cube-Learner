@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera } from 'lucide-react';
+import { ArenaModal } from './components/ArenaModal';
 import { BottomDock } from './components/BottomDock';
 import { CompactNotationBar } from './components/CompactNotationBar';
 import { PauseModal, VictoryModal } from './components/Modals';
@@ -159,12 +160,18 @@ export default function App() {
   const [snapshotToast, setSnapshotToast] = useState<{ ok: boolean; message: string } | null>(null);
   const snapshotToastTimerRef = useRef<number | null>(null);
 
-  // Built-in Stopwatch & Timing Analytics Dashboard state
+  // Built-in Stopwatch, Timing Analytics & 1v1 Live Arena state
   const [timerModalTab, setTimerModalTab] = useState<TimerDashboardTab | null>(() => {
     if (initialSeoRoute.view === 'timer') return 'stopwatch';
     if (initialSeoRoute.view === 'daily') return 'daily';
     return null;
   });
+  const [arenaOpen, setArenaOpen] = useState<boolean>(
+    () => initialSeoRoute.view === 'arena' || Boolean(initialSeoRoute.roomCode)
+  );
+  const [arenaInviteRoomCode, setArenaInviteRoomCode] = useState<string | null>(
+    () => initialSeoRoute.roomCode ?? null
+  );
   const [solveRecords, setSolveRecords] = useState<SolveRecord[]>(() => loadSolveRecords());
   const [activeDailyDateKey, setActiveDailyDateKey] = useState<string | null>(null);
 
@@ -199,6 +206,7 @@ export default function App() {
   const isSteppingMethodRef = useRef<boolean>(false);
   const activeDailyRef = useRef<{ dateKey: string; puzzleType: PuzzleType; scramble: string } | null>(null);
   const timerModalOpenRef = useRef<boolean>(false);
+  const arenaOpenRef = useRef<boolean>(false);
   const paletteStudioOpenRef = useRef<boolean>(false);
   const shortcutsOpenRef = useRef<boolean>(false);
   const puzzleRef = useRef<PuzzleType>(puzzleType);
@@ -219,6 +227,7 @@ export default function App() {
   activeMethodPlanRef.current = activeMethodPlan;
   playTrackerLabelRef.current = playTrackerLabel;
   timerModalOpenRef.current = timerModalTab !== null;
+  arenaOpenRef.current = arenaOpen;
   paletteStudioOpenRef.current = paletteStudioOpen;
   shortcutsOpenRef.current = shortcutsOpen;
 
@@ -239,7 +248,9 @@ export default function App() {
 
   useEffect(() => {
     let activeSeoView: SeoViewId = 'home';
-    if (timerModalTab === 'daily') {
+    if (arenaOpen) {
+      activeSeoView = 'arena';
+    } else if (timerModalTab === 'daily') {
       activeSeoView = 'daily';
     } else if (timerModalTab === 'stopwatch' || timerModalTab === 'analytics') {
       activeSeoView = 'timer';
@@ -247,7 +258,7 @@ export default function App() {
       activeSeoView = activeTab === 'learn' ? 'tutorials' : 'solver';
     }
     syncDocumentSeo(activeSeoView);
-  }, [gameState, activeTab, timerModalTab]);
+  }, [gameState, activeTab, timerModalTab, arenaOpen]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -635,19 +646,26 @@ export default function App() {
       }
       handleStartStudio();
       setDockCollapsed(false);
-      if (view === 'tutorials') {
+      if (view === 'arena') {
+        setTimerModalTab(null);
+        setArenaOpen(true);
+      } else if (view === 'tutorials') {
+        setArenaOpen(false);
         setTimerModalTab(null);
         setActiveTab('learn');
         activeTabRef.current = 'learn';
       } else if (view === 'timer') {
+        setArenaOpen(false);
         setActiveTab('play');
         activeTabRef.current = 'play';
         setTimerModalTab('stopwatch');
       } else if (view === 'daily') {
+        setArenaOpen(false);
         setActiveTab('play');
         activeTabRef.current = 'play';
         setTimerModalTab('daily');
       } else {
+        setArenaOpen(false);
         setTimerModalTab(null);
         setActiveTab('play');
         activeTabRef.current = 'play';
@@ -1383,7 +1401,7 @@ export default function App() {
   // Shift for prime ', Enter/Space title start, Esc/P pause, V mute, H HUD, Ctrl+Z/Backspace undo, T stopwatch)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (timerModalOpenRef.current || paletteStudioOpenRef.current) return;
+      if (timerModalOpenRef.current || arenaOpenRef.current || paletteStudioOpenRef.current) return;
 
       const target = e.target as HTMLElement | null;
       const isTyping =
@@ -1498,6 +1516,11 @@ export default function App() {
           onOpenDashboard={() => {
             cubeAudio.playUiTick();
             setTimerModalTab('dashboard');
+          }}
+          onOpenArena={() => {
+            cubeAudio.playUiTick();
+            setTimerModalTab(null);
+            setArenaOpen(true);
           }}
           onExportSnapshot={handleExportSnapshot}
           onResetCamera={() => engineRef.current?.resetCamera()}
@@ -1778,6 +1801,19 @@ export default function App() {
           onImportBackupJson={handleImportBackupJson}
           onApplyScrambleTo3D={handleApplyScrambleTo3D}
           onPlayDailyIn3D={handlePlayDailyIn3D}
+        />
+      )}
+
+      {/* 1v1 Online Live Speedcubing Competition Arena (Video + Audio + Independent Timers) */}
+      {arenaOpen && (
+        <ArenaModal
+          theme={theme}
+          initialPuzzle={puzzleType}
+          initialRoomCode={arenaInviteRoomCode}
+          onClose={() => {
+            setArenaOpen(false);
+            setArenaInviteRoomCode(null);
+          }}
         />
       )}
     </main>

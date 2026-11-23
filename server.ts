@@ -1,10 +1,22 @@
 import 'dotenv/config';
+import crypto from 'crypto';
 import express from 'express';
 import fs from 'fs';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { WebSocket, WebSocketServer } from 'ws';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import {
+  ArenaEngine,
+  VALID_ARENA_PENALTIES,
+  VALID_ARENA_PUZZLES,
+  type ArenaClientMessage,
+  type ArenaRoomEventKind,
+  type ArenaRoomSnapshot,
+  type ArenaServerMessage,
+} from './src/cube/arenaEngine.ts';
 import {
   generateDailyScramble,
   getNextUtcMidnightMs,
@@ -83,6 +95,17 @@ async function createServer() {
 
   app.get(['/robots.txt', '/Rubiks-Cube-Learner/robots.txt'], sendSeoStaticFile('robots.txt', 'text/plain; charset=utf-8'));
   app.get(['/sitemap.xml', '/Rubiks-Cube-Learner/sitemap.xml'], sendSeoStaticFile('sitemap.xml', 'application/xml; charset=utf-8'));
+
+  const arenaEngine = new ArenaEngine();
+  const arenaSockets = new Map<string, WebSocket>();
+  const arenaQueuedPuzzle = new Map<string, PuzzleType>();
+
+  app.get('/api/arena/status', (_req, res) => {
+    res.json({
+      queueCounts: arenaEngine.getQueueCounts(),
+      activeRooms: arenaEngine.getActiveRoomCount(),
+    });
+  });
 
   let dailyEntries: DailyLeaderboardEntry[] = loadDailyStore();
 
@@ -344,7 +367,304 @@ async function createServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = http.createServer(app);
+  const arenaWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+
+  const sendWs = (ws: WebSocket | undefined, payload: ArenaServerMessage) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(JSON.stringify(payload));
+    } catch {
+      // ignore transient socket write errors
+    }
+  };
+
+  const broadcastRoom = (room: ArenaRoomSnapshot, event: ArenaRoomEventKind = 'updated') => {
+    for (const p of room.players) {
+      sendWs(arenaSockets.get(p.playerId), {
+        type: 'room:state',
+        room,
+        event,
+      });
+    }
+  };
+
+  const broadcastQueueCounts = () => {
+    const queueCounts = arenaEngine.getQueueCounts();
+    for (const [pid, puzzle] of arenaQueuedPuzzle.entries()) {
+      sendWs(arenaSockets.get(pid), {
+        type: 'queue:status',
+        queued: true,
+        puzzleType: puzzle,
+        queueSize: queueCounts[puzzle] ?? 0,
+        queueCounts,
+      });
+    }
+  };
+
+  const VALID_SIGNAL_TYPES = new Set(['offer', 'answer', 'ice']);
+  const VALID_TIMER_PHASES = new Set(['idle', 'holding', 'armed', 'running']);
+
+  httpServer.on('upgrade', (request, socket, head) => {
+    try {
+      const reqUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+      if (
+        reqUrl.pathname === '/ws/arena' ||
+        reqUrl.pathname === '/Rubiks-Cube-Learner/ws/arena'
+      ) {
+        arenaWss.handleUpgrade(request, socket, head, (ws) => {
+          arenaWss.emit('connection', ws, request);
+        });
+      }
+    } catch {
+      socket.destroy();
+    }
+  });
+
+  // Periodic WebSocket liveness check to clean up dropped sockets
+  const heartbeatInterval = setInterval(() => {
+    for (const ws of arenaWss.clients) {
+      const tracked = ws as WebSocket & { isAlive?: boolean };
+      if (tracked.isAlive === false) {
+        ws.terminate();
+        continue;
+      }
+      tracked.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        // ignore
+      }
+    }
+  }, 30000);
+
+  arenaWss.on('close', () => {
+    clearInterval(heartbeatInterval);
+  });
+
+  arenaWss.on('connection', (ws) => {
+    const tracked = ws as WebSocket & { isAlive?: boolean };
+    tracked.isAlive = true;
+    ws.on('pong', () => {
+      tracked.isAlive = true;
+    });
+
+    const playerId = crypto.randomUUID();
+    arenaSockets.set(playerId, ws);
+
+    sendWs(ws, {
+      type: 'welcome',
+      playerId,
+      queueCounts: arenaEngine.getQueueCounts(),
+      activeRooms: arenaEngine.getActiveRoomCount(),
+    });
+
+    ws.on('message', (raw) => {
+      let msg: ArenaClientMessage;
+      try {
+        const text = typeof raw === 'string' ? raw : raw.toString('utf8');
+        const parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.type !== 'string') {
+          sendWs(ws, { type: 'error', code: 'INVALID_PAYLOAD', message: 'Malformed message.' });
+          return;
+        }
+        msg = parsed as ArenaClientMessage;
+      } catch {
+        sendWs(ws, { type: 'error', code: 'INVALID_JSON', message: 'Invalid JSON payload.' });
+        return;
+      }
+
+      switch (msg.type) {
+        case 'ping': {
+          sendWs(ws, { type: 'pong', serverTimeMs: Date.now() });
+          break;
+        }
+
+        case 'room:create': {
+          const puzzle = VALID_ARENA_PUZZLES.has(msg.puzzleType) ? msg.puzzleType : '3x3';
+          arenaQueuedPuzzle.delete(playerId);
+          const res = arenaEngine.createPrivateRoom(playerId, puzzle, {
+            name: String(msg.name ?? ''),
+            camEnabled: Boolean(msg.camEnabled),
+            micEnabled: Boolean(msg.micEnabled),
+          });
+          if (!res.ok) {
+            sendWs(ws, { type: 'error', code: res.code, message: res.message });
+            return;
+          }
+          if (res.data.affectedPreviousRoom) {
+            broadcastRoom(res.data.affectedPreviousRoom, 'opponent_left');
+          }
+          broadcastRoom(res.data.room, 'created');
+          broadcastQueueCounts();
+          break;
+        }
+
+        case 'room:join': {
+          arenaQueuedPuzzle.delete(playerId);
+          const res = arenaEngine.joinPrivateRoom(playerId, String(msg.roomCode ?? ''), {
+            name: String(msg.name ?? ''),
+            camEnabled: Boolean(msg.camEnabled),
+            micEnabled: Boolean(msg.micEnabled),
+          });
+          if (!res.ok) {
+            sendWs(ws, { type: 'error', code: res.code, message: res.message });
+            return;
+          }
+          if (res.data.affectedPreviousRoom) {
+            broadcastRoom(res.data.affectedPreviousRoom, 'opponent_left');
+          }
+          broadcastRoom(res.data.room, 'joined');
+          broadcastQueueCounts();
+          break;
+        }
+
+        case 'room:leave': {
+          const left = arenaEngine.leaveRoom(playerId);
+          sendWs(ws, { type: 'room:left', reason: 'left' });
+          if (left.remainingRoom) {
+            broadcastRoom(left.remainingRoom, 'opponent_left');
+          }
+          break;
+        }
+
+        case 'matchmaking:join': {
+          const puzzle = VALID_ARENA_PUZZLES.has(msg.puzzleType) ? msg.puzzleType : '3x3';
+          const res = arenaEngine.joinMatchmaking(playerId, puzzle, {
+            name: String(msg.name ?? ''),
+            camEnabled: Boolean(msg.camEnabled),
+            micEnabled: Boolean(msg.micEnabled),
+          });
+          if (res.affectedPreviousRoom) {
+            broadcastRoom(res.affectedPreviousRoom, 'opponent_left');
+          }
+          if (res.matched) {
+            arenaQueuedPuzzle.delete(playerId);
+            arenaQueuedPuzzle.delete(res.peerId);
+            broadcastRoom(res.room, 'matched');
+            broadcastQueueCounts();
+          } else {
+            arenaQueuedPuzzle.set(playerId, res.puzzleType);
+            broadcastQueueCounts();
+          }
+          break;
+        }
+
+        case 'matchmaking:leave': {
+          arenaEngine.leaveMatchmaking(playerId);
+          arenaQueuedPuzzle.delete(playerId);
+          sendWs(ws, {
+            type: 'queue:status',
+            queued: false,
+            puzzleType: null,
+            queueSize: 0,
+            queueCounts: arenaEngine.getQueueCounts(),
+          });
+          broadcastQueueCounts();
+          break;
+        }
+
+        case 'media:status': {
+          const updated = arenaEngine.updateMediaStatus(
+            playerId,
+            Boolean(msg.camEnabled),
+            Boolean(msg.micEnabled)
+          );
+          if (updated) {
+            broadcastRoom(updated, 'updated');
+          }
+          break;
+        }
+
+        case 'timer:phase': {
+          if (!VALID_TIMER_PHASES.has(msg.phase)) return;
+          const res = arenaEngine.updateTimerPhase(playerId, msg.phase);
+          if (res.ok) {
+            broadcastRoom(res.data, 'updated');
+          }
+          break;
+        }
+
+        case 'timer:finish': {
+          const penalty =
+            msg.penalty && VALID_ARENA_PENALTIES.has(msg.penalty) ? msg.penalty : 'none';
+          const res = arenaEngine.finishTimer(playerId, Number(msg.timeMs), penalty);
+          if (!res.ok) {
+            sendWs(ws, { type: 'error', code: res.code, message: res.message });
+            return;
+          }
+          broadcastRoom(res.data, 'updated');
+          break;
+        }
+
+        case 'timer:penalty': {
+          if (!VALID_ARENA_PENALTIES.has(msg.penalty)) return;
+          const res = arenaEngine.updatePenalty(
+            playerId,
+            msg.penalty,
+            typeof msg.roundNumber === 'number' ? msg.roundNumber : undefined
+          );
+          if (res.ok) {
+            broadcastRoom(res.data, 'updated');
+          }
+          break;
+        }
+
+        case 'round:next': {
+          const res = arenaEngine.advanceRound(playerId);
+          if (!res.ok) {
+            sendWs(ws, { type: 'error', code: res.code, message: res.message });
+            return;
+          }
+          broadcastRoom(res.data, 'next_round');
+          break;
+        }
+
+        case 'room:puzzle': {
+          if (!VALID_ARENA_PUZZLES.has(msg.puzzleType)) return;
+          const res = arenaEngine.changeRoomPuzzle(playerId, msg.puzzleType);
+          if (!res.ok) {
+            sendWs(ws, { type: 'error', code: res.code, message: res.message });
+            return;
+          }
+          broadcastRoom(res.data, 'next_round');
+          break;
+        }
+
+        case 'webrtc:signal': {
+          if (!VALID_SIGNAL_TYPES.has(msg.signalType)) return;
+          if (msg.payload !== null && typeof msg.payload !== 'object') return;
+          // Strictly isolate WebRTC signaling to the verified peer seated in the sender's room
+          const peerId = arenaEngine.getPeerPlayerId(playerId);
+          if (!peerId) return;
+          sendWs(arenaSockets.get(peerId), {
+            type: 'webrtc:signal',
+            fromPlayerId: playerId,
+            signalType: msg.signalType,
+            payload: msg.payload,
+          });
+          break;
+        }
+
+        default:
+          sendWs(ws, { type: 'error', code: 'UNKNOWN_MESSAGE', message: 'Unknown message type.' });
+      }
+    });
+
+    ws.on('close', () => {
+      arenaSockets.delete(playerId);
+      arenaQueuedPuzzle.delete(playerId);
+      const disc = arenaEngine.disconnectPlayer(playerId);
+      if (disc.remainingRoom) {
+        broadcastRoom(disc.remainingRoom, 'opponent_left');
+      }
+      if (disc.removedFromQueue) {
+        broadcastQueueCounts();
+      }
+    });
+  });
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Kubi Studio running on http://0.0.0.0:${PORT}`);
   });
 }

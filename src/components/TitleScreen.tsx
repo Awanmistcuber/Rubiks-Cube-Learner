@@ -234,6 +234,15 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             className="mt-4 pt-3.5 border-t grid grid-cols-2 gap-x-3 gap-y-1.5"
             style={{ borderColor: theme.ui.border }}
           >
+            <a
+              href={buildInternalViewHref('arena')}
+              title="1v1 live online speedcubing competition with video, audio, and shared scramble"
+              onClick={(e) => handleLinkClick(e, 'arena')}
+              className="col-span-2 text-xs font-semibold py-1 rounded-md transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 truncate"
+              style={{ color: theme.ui.accent }}
+            >
+              1v1 Live Competition Arena (Video &amp; Audio) →
+            </a>
             {INTERNAL_SEO_LINKS.map((item) => (
               <a
                 key={item.view}

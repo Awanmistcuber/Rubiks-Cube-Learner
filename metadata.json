@@ -1,6 +1,6 @@
 {
   "name": "Kubi Studio",
   "description": "Master speedcubing with interactive 3D Rubik's Cube tutorials (Beginner, CFOP, Roux, ZZ), a WCA timer, live move tracker, and 2x2, 3x3, 4x4 & Mirror cubes.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

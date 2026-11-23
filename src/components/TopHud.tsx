@@ -7,6 +7,7 @@ import {
   PanelRightOpen,
   Pause,
   RotateCcw,
+  Swords,
   Timer,
   Volume2,
   VolumeX,
@@ -28,6 +29,7 @@ interface TopHudProps {
   onSelectPuzzle: (p: PuzzleType) => void;
   onOpenStopwatch: () => void;
   onOpenDashboard: () => void;
+  onOpenArena: () => void;
   onExportSnapshot: () => void;
   onResetCamera: () => void;
   onToggleMute: () => void;
@@ -60,6 +62,7 @@ export const TopHud: React.FC<TopHudProps> = ({
   onSelectPuzzle,
   onOpenStopwatch,
   onOpenDashboard,
+  onOpenArena,
   onExportSnapshot,
   onResetCamera,
   onToggleMute,
@@ -169,6 +172,25 @@ export const TopHud: React.FC<TopHudProps> = ({
 
         {/* Mobile Compact Right Utility Icons (Row 1) */}
         <div className="flex sm:hidden items-center gap-1 shrink-0">
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="hud-open-arena-mobile-btn"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenArena();
+            }}
+            aria-label="Open 1v1 Live Speedcubing Arena"
+            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            style={{
+              backgroundColor: theme.ui.accent,
+              borderColor: theme.ui.accent,
+              color: theme.ui.accentFg,
+            }}
+          >
+            <Swords className="w-4 h-4" />
+          </button>
+
           <button
             type="button"
             tabIndex={-1}
@@ -391,6 +413,26 @@ export const TopHud: React.FC<TopHudProps> = ({
           >
             <BarChart3 className="w-3.5 h-3.5 shrink-0" />
             <span className="hidden lg:inline">Stats</span>
+          </button>
+
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="hud-open-arena-btn"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenArena();
+            }}
+            aria-label="Open 1v1 Live Speedcubing Arena"
+            title="1v1 Online Competition (Video & Audio)"
+            className="h-8 px-2 lg:px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            style={{
+              backgroundColor: theme.ui.accent,
+              color: theme.ui.accentFg,
+            }}
+          >
+            <Swords className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden lg:inline">1v1 Arena</span>
           </button>
         </div>
 
