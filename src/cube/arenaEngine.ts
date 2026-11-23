@@ -39,6 +39,49 @@ export interface ArenaRoundRecord {
   completedAt: number;
 }
 
+export interface ArenaChatPreset {
+  id: string;
+  kind: 'text' | 'emoji';
+  label: string;
+}
+
+export const ARENA_CHAT_PRESETS: readonly ArenaChatPreset[] = [
+  { id: 'glhf', kind: 'text', label: 'Good luck, have fun!' },
+  { id: 'ready', kind: 'text', label: 'Ready for next round' },
+  { id: 'sec', kind: 'text', label: 'One sec, scrambling...' },
+  { id: 'nice', kind: 'text', label: 'Nice solve!' },
+  { id: 'wow', kind: 'text', label: 'Insane time!' },
+  { id: 'gg', kind: 'text', label: 'Good game!' },
+  { id: 'rematch', kind: 'text', label: 'One more round?' },
+  { id: 'cam', kind: 'text', label: 'Adjusting camera' },
+  { id: 'e_wave', kind: 'emoji', label: '👋' },
+  { id: 'e_fire', kind: 'emoji', label: '🔥' },
+  { id: 'e_clap', kind: 'emoji', label: '👏' },
+  { id: 'e_bolt', kind: 'emoji', label: '⚡' },
+  { id: 'e_cube', kind: 'emoji', label: '🧊' },
+  { id: 'e_mindblown', kind: 'emoji', label: '🤯' },
+  { id: 'e_trophy', kind: 'emoji', label: '🏆' },
+  { id: 'e_gg', kind: 'emoji', label: '🤝' },
+] as const;
+
+const CHAT_PRESET_MAP = new Map<string, ArenaChatPreset>(
+  ARENA_CHAT_PRESETS.map((preset) => [preset.id, preset])
+);
+
+export function getChatPresetById(presetId: string): ArenaChatPreset | null {
+  return CHAT_PRESET_MAP.get(presetId) ?? null;
+}
+
+export interface ArenaChatMessage {
+  id: string;
+  playerId: string;
+  senderName: string;
+  presetId: string;
+  kind: 'text' | 'emoji';
+  text: string;
+  sentAt: number;
+}
+
 export interface ArenaRoomSnapshot {
   roomCode: string;
   mode: ArenaRoomMode;
@@ -47,6 +90,7 @@ export interface ArenaRoomSnapshot {
   currentScramble: string;
   players: ArenaPlayerState[];
   history: ArenaRoundRecord[];
+  chat: ArenaChatMessage[];
   serverTimeMs: number;
   createdAt: number;
 }
@@ -87,7 +131,9 @@ export type ArenaClientMessage =
   | { type: 'timer:penalty'; penalty: SolvePenalty; roundNumber?: number }
   | { type: 'round:next' }
   | { type: 'room:puzzle'; puzzleType: PuzzleType }
+  | { type: 'chat:send'; presetId: string }
   | { type: 'webrtc:signal'; signalType: 'offer' | 'answer' | 'ice'; payload: unknown }
+  | { type: 'webrtc:frame'; dataUrl: string }
   | { type: 'ping' };
 
 export type ArenaRoomEventKind =
@@ -123,6 +169,11 @@ export type ArenaServerMessage =
       fromPlayerId: string;
       signalType: 'offer' | 'answer' | 'ice';
       payload: unknown;
+    }
+  | {
+      type: 'webrtc:frame';
+      fromPlayerId: string;
+      dataUrl: string;
     }
   | { type: 'error'; code: string; message: string }
   | { type: 'pong'; serverTimeMs: number };
@@ -189,6 +240,9 @@ interface InternalRoom {
   currentScramble: string;
   players: ArenaPlayerState[];
   history: ArenaRoundRecord[];
+  chat: ArenaChatMessage[];
+  lastChatAtByPlayer: Map<string, number>;
+  chatSeq: number;
   createdAt: number;
 }
 
@@ -293,6 +347,7 @@ export class ArenaEngine {
           Object.entries(h.results).map(([k, v]) => [k, { ...v }])
         ),
       })),
+      chat: room.chat.map((c) => ({ ...c })),
       serverTimeMs: this.nowFn(),
       createdAt: room.createdAt,
     };
@@ -388,6 +443,9 @@ export class ArenaEngine {
       currentScramble: generateWcaScrambleString(safePuzzle),
       players: [this.createSeat(playerId, 0, profile)],
       history: [],
+      chat: [],
+      lastChatAtByPlayer: new Map(),
+      chatSeq: 0,
       createdAt: this.nowFn(),
     };
 
@@ -510,6 +568,9 @@ export class ArenaEngine {
           this.createSeat(playerId, 1, profile),
         ],
         history: [],
+        chat: [],
+        lastChatAtByPlayer: new Map(),
+        chatSeq: 0,
         createdAt: this.nowFn(),
       };
 
@@ -780,5 +841,60 @@ export class ArenaEngine {
     }
 
     return { ok: true, data: this.toSnapshot(room) };
+  }
+
+  sendChatPreset(
+    playerId: string,
+    presetId: string
+  ): ArenaActionResult<{ room: ArenaRoomSnapshot; message: ArenaChatMessage }> {
+    const code = this.playerRoom.get(playerId);
+    if (!code) {
+      return { ok: false, code: 'NOT_IN_ROOM', message: 'Join a competition room first.' };
+    }
+    const room = this.rooms.get(code);
+    if (!room) {
+      return { ok: false, code: 'ROOM_NOT_FOUND', message: 'Room no longer exists.' };
+    }
+    const player = room.players.find((p) => p.playerId === playerId);
+    if (!player) {
+      return { ok: false, code: 'NOT_SEATED', message: 'Player is not seated in this room.' };
+    }
+
+    const preset = getChatPresetById(String(presetId ?? ''));
+    if (!preset) {
+      return { ok: false, code: 'INVALID_CHAT_PRESET', message: 'Unknown quick-chat message.' };
+    }
+
+    const now = this.nowFn();
+    const lastSent = room.lastChatAtByPlayer.get(playerId) ?? 0;
+    if (now - lastSent < 300) {
+      return { ok: false, code: 'CHAT_RATE_LIMITED', message: 'Please wait a moment before sending again.' };
+    }
+
+    room.lastChatAtByPlayer.set(playerId, now);
+    room.chatSeq += 1;
+
+    const message: ArenaChatMessage = {
+      id: `${room.roomCode}-${room.chatSeq}`,
+      playerId: player.playerId,
+      senderName: player.name,
+      presetId: preset.id,
+      kind: preset.kind,
+      text: preset.label,
+      sentAt: now,
+    };
+
+    room.chat.push(message);
+    if (room.chat.length > 30) {
+      room.chat = room.chat.slice(-30);
+    }
+
+    return {
+      ok: true,
+      data: {
+        room: this.toSnapshot(room),
+        message,
+      },
+    };
   }
 }

@@ -4,6 +4,7 @@ import {
   Copy,
   Link2,
   LogOut,
+  MessageSquare,
   Mic,
   MicOff,
   RefreshCw,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 import { cubeAudio } from '../cube/audio';
 import {
+  ARENA_CHAT_PRESETS,
   isValidRoomCode,
   normalizeRoomCode,
   type ArenaPlayerState,
@@ -58,31 +60,50 @@ function buildInviteUrl(roomCode: string): string {
   return url.toString();
 }
 
+const CHAT_EMOJI_PRESETS = ARENA_CHAT_PRESETS.filter((p) => p.kind === 'emoji');
+const CHAT_TEXT_PRESETS = ARENA_CHAT_PRESETS.filter((p) => p.kind === 'text');
+
+interface ReactionBubble {
+  id: string;
+  text: string;
+  kind: 'text' | 'emoji';
+}
+
 interface VideoFeedBoxProps {
   stream: MediaStream | null;
+  fallbackFrame?: string | null;
   camOn: boolean;
   micOn: boolean;
+  isLocal?: boolean;
   muted: boolean;
   mirrored?: boolean;
   name: string;
   subtitle: string;
   theme: ThemePalette;
+  reactionBubble?: ReactionBubble | null;
   overlayControls?: React.ReactNode;
+  testId?: string;
 }
 
 const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
   stream,
+  fallbackFrame = null,
   camOn,
   micOn,
+  isLocal = false,
   muted,
   mirrored = false,
   name,
   subtitle,
   theme,
+  reactionBubble = null,
   overlayControls,
+  testId,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [videoHasFrame, setVideoHasFrame] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
 
   const hasLiveVideoTrack = Boolean(
     stream && stream.getVideoTracks().some((t) => t.readyState === 'live')
@@ -90,48 +111,109 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
   const hasLiveAudioTrack = Boolean(
     stream && stream.getAudioTracks().some((t) => t.readyState === 'live')
   );
-  const showVideo = camOn && hasLiveVideoTrack;
+  const canRenderVideoElement = camOn && hasLiveVideoTrack;
+  const showFallbackImage = camOn && Boolean(fallbackFrame) && !videoHasFrame;
+  const showAvatar = !camOn || (!hasLiveVideoTrack && !fallbackFrame);
 
+  // Reset decoded frame state when source stream or camera state changes
+  useEffect(() => {
+    setVideoHasFrame(false);
+  }, [stream, camOn]);
+
+  // Always keep <video> muted so Chrome/Safari/Edge autoplay NEVER stalls on a black frame.
+  // Remote audio is routed through the dedicated <audio> element below.
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    if (stream && showVideo) {
-      el.srcObject = stream;
+    if (stream && canRenderVideoElement) {
+      if (el.srcObject !== stream) {
+        el.srcObject = stream;
+      }
+      el.muted = true;
       el.play().catch(() => {});
     } else {
       el.srcObject = null;
     }
-  }, [stream, showVideo]);
+  }, [stream, canRenderVideoElement]);
 
-  // Keep remote audio playing even when opponent's camera is off (audio-only mode)
+  // Dedicated remote audio playback with graceful autoplay-unlock prompt if browser blocks audio
   useEffect(() => {
     const el = audioRef.current;
-    if (!el) return;
-    if (!muted && stream && hasLiveAudioTrack && !showVideo) {
-      el.srcObject = stream;
-      el.play().catch(() => {});
+    if (!el || isLocal) return;
+    if (stream && hasLiveAudioTrack) {
+      if (el.srcObject !== stream) {
+        el.srcObject = stream;
+      }
+      el.muted = muted;
+      if (muted) {
+        setAudioBlocked(false);
+        return;
+      }
+      const playPromise = el.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        playPromise
+          .then(() => setAudioBlocked(false))
+          .catch(() => setAudioBlocked(true));
+      }
     } else {
       el.srcObject = null;
+      setAudioBlocked(false);
     }
-  }, [stream, hasLiveAudioTrack, muted, showVideo]);
+  }, [stream, hasLiveAudioTrack, isLocal, muted]);
+
+  const handleUnlockAudio = () => {
+    const el = audioRef.current;
+    if (!el) return;
+    el.muted = false;
+    el.play()
+      .then(() => setAudioBlocked(false))
+      .catch(() => {});
+  };
+
+  const handleVideoFrameCheck = (el: HTMLVideoElement) => {
+    if (el.videoWidth > 0 && el.videoHeight > 0) {
+      setVideoHasFrame(true);
+    }
+  };
 
   return (
     <div
+      data-testid={testId}
       className="relative w-full aspect-video max-h-[240px] lg:max-h-[280px] rounded-xl overflow-hidden border flex items-center justify-center"
       style={{
         backgroundColor: '#121318',
         borderColor: theme.ui.border,
       }}
     >
-      {showVideo ? (
+      {canRenderVideoElement && (
         <video
           ref={videoRef}
           autoPlay
           playsInline
-          muted={muted}
-          className={`w-full h-full object-cover ${mirrored ? '-scale-x-100' : ''}`}
+          muted={true}
+          onLoadedMetadata={(e) => {
+            e.currentTarget.play().catch(() => {});
+            handleVideoFrameCheck(e.currentTarget);
+          }}
+          onLoadedData={(e) => handleVideoFrameCheck(e.currentTarget)}
+          onPlaying={(e) => handleVideoFrameCheck(e.currentTarget)}
+          onResize={(e) => handleVideoFrameCheck(e.currentTarget)}
+          className={`w-full h-full object-cover ${mirrored ? '-scale-x-100' : ''} ${
+            showFallbackImage ? 'opacity-0 absolute inset-0' : 'opacity-100'
+          }`}
         />
-      ) : (
+      )}
+
+      {showFallbackImage && fallbackFrame && (
+        <img
+          data-testid={testId ? `${testId}-fallback-img` : undefined}
+          src={fallbackFrame}
+          alt={`${name} live camera feed`}
+          className="w-full h-full object-cover"
+        />
+      )}
+
+      {showAvatar && (
         <div className="flex flex-col items-center justify-center gap-2 px-4 pb-10 text-center">
           <div
             className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center font-display text-xl sm:text-2xl font-bold border"
@@ -144,13 +226,55 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
             {getInitials(name)}
           </div>
           <p className="text-[11px] font-medium" style={{ color: 'rgba(244,244,246,0.72)' }}>
-            {micOn ? 'Audio Only · Camera Off' : 'Avatar Mode · Camera & Mic Off'}
+            {camOn
+              ? 'Connecting camera...'
+              : micOn
+                ? 'Audio Only · Camera Off'
+                : 'Avatar Mode · Camera & Mic Off'}
           </p>
         </div>
       )}
 
-      {/* Hidden audio element for remote audio-only mode */}
-      {!muted && <audio ref={audioRef} autoPlay playsInline className="hidden" />}
+      {/* Dedicated remote audio element (prevents autoplay policy from blocking video frames) */}
+      {!isLocal && <audio ref={audioRef} autoPlay playsInline muted={muted} className="hidden" />}
+
+      {/* One-tap audio unlock if browser autoplay policy paused remote audio */}
+      {!isLocal && audioBlocked && !muted && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.currentTarget.blur();
+            handleUnlockAudio();
+          }}
+          className="absolute top-2.5 left-2.5 z-10 h-8 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer border"
+          style={{
+            backgroundColor: 'rgba(18, 19, 24, 0.85)',
+            borderColor: 'rgba(255, 255, 255, 0.25)',
+            color: '#FFFFFF',
+          }}
+        >
+          <Volume2 className="w-3.5 h-3.5" />
+          <span>Enable Audio</span>
+        </button>
+      )}
+
+      {/* Ephemeral Quick-Chat / Emoji Reaction Toast on Competitor Pane */}
+      {reactionBubble && (
+        <div
+          key={reactionBubble.id}
+          data-testid={testId ? `${testId}-reaction` : undefined}
+          className={`pointer-events-none absolute top-2.5 right-2.5 z-10 max-w-[78%] rounded-xl border px-3 py-1.5 shadow-lg ${
+            reactionBubble.kind === 'emoji' ? 'text-2xl leading-none py-1.5 px-2.5' : 'text-xs font-semibold'
+          }`}
+          style={{
+            backgroundColor: 'rgba(18, 19, 24, 0.86)',
+            borderColor: 'rgba(255, 255, 255, 0.22)',
+            color: '#FFFFFF',
+          }}
+        >
+          {reactionBubble.text}
+        </div>
+      )}
 
       {/* Measured contrast scrim for video/avatar overlay legibility */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
@@ -188,6 +312,12 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
   const [localPhase, setLocalPhase] = useState<ArenaTimerPhase>('idle');
   const [localElapsedMs, setLocalElapsedMs] = useState(0);
   const [opponentLiveMs, setOpponentLiveMs] = useState<number>(0);
+
+  // Ephemeral chat/emoji reaction bubbles over competitor video panes
+  const [reactionByPlayer, setReactionByPlayer] = useState<Record<string, ReactionBubble | null>>({});
+  const seenChatIdsRef = useRef<Set<string>>(new Set());
+  const reactionTimersRef = useRef<Record<string, number>>({});
+  const chatFeedRef = useRef<HTMLDivElement | null>(null);
 
   const localPhaseRef = useRef<ArenaTimerPhase>('idle');
   const holdTimerRef = useRef<number | null>(null);
@@ -238,6 +368,54 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
       setLocalElapsedMs(0);
     }
   }, [room]);
+
+  // Surface fresh preset chat / emoji messages as floating reaction bubbles on competitor panes
+  const roomChat = room?.chat;
+  useEffect(() => {
+    if (!room) {
+      seenChatIdsRef.current.clear();
+      setReactionByPlayer({});
+      for (const timerId of Object.values(reactionTimersRef.current)) {
+        window.clearTimeout(timerId);
+      }
+      reactionTimersRef.current = {};
+      return;
+    }
+
+    if (!roomChat || roomChat.length === 0) return;
+
+    const freshMessages = roomChat.filter((m) => !seenChatIdsRef.current.has(m.id));
+    if (freshMessages.length === 0) return;
+
+    for (const msg of freshMessages) {
+      seenChatIdsRef.current.add(msg.id);
+      const pid = msg.playerId;
+      setReactionByPlayer((prev) => ({
+        ...prev,
+        [pid]: { id: msg.id, text: msg.text, kind: msg.kind },
+      }));
+      if (reactionTimersRef.current[pid]) {
+        window.clearTimeout(reactionTimersRef.current[pid]);
+      }
+      reactionTimersRef.current[pid] = window.setTimeout(() => {
+        setReactionByPlayer((prev) =>
+          prev[pid]?.id === msg.id ? { ...prev, [pid]: null } : prev
+        );
+      }, 3200);
+    }
+
+    if (chatFeedRef.current) {
+      chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight;
+    }
+  }, [room, roomChat]);
+
+  useEffect(() => {
+    return () => {
+      for (const timerId of Object.values(reactionTimersRef.current)) {
+        window.clearTimeout(timerId);
+      }
+    };
+  }, []);
 
   // Matchmaking elapsed wait counter
   useEffect(() => {
@@ -642,6 +820,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                   stream={arena.localStream}
                   camOn={arena.camEnabled}
                   micOn={arena.micEnabled}
+                  isLocal={true}
                   muted={true}
                   mirrored={true}
                   name={playerName.trim() || 'Speedcuber'}
@@ -655,6 +834,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                         : 'Avatar + Timer Mode'
                   }
                   theme={theme}
+                  testId="lobby-local-video"
                   overlayControls={
                     <>
                       <button
@@ -1100,6 +1280,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                   stream={arena.localStream}
                   camOn={arena.camEnabled}
                   micOn={arena.micEnabled}
+                  isLocal={true}
                   muted={true}
                   mirrored={true}
                   name={`${mySeat?.name ?? playerName} (You)`}
@@ -1113,6 +1294,8 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                         : 'Avatar Mode'
                   }
                   theme={theme}
+                  reactionBubble={mySeat ? reactionByPlayer[mySeat.playerId] ?? null : null}
+                  testId="arena-local-video"
                   overlayControls={
                     <>
                       <button
@@ -1342,8 +1525,10 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
 
                     <VideoFeedBox
                       stream={arena.remoteStream}
+                      fallbackFrame={arena.remoteFallbackFrame}
                       camOn={opponentSeat.camEnabled}
                       micOn={opponentSeat.micEnabled}
+                      isLocal={false}
                       muted={arena.remoteAudioMuted}
                       mirrored={false}
                       name={opponentSeat.name}
@@ -1354,11 +1539,15 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                             : opponentSeat.micEnabled
                               ? 'Live P2P Audio'
                               : 'Connected · Avatar Mode'
-                          : arena.webrtcStatus === 'fallback'
-                            ? 'Timers Synced · Direct Video Unavailable'
-                            : 'Connecting P2P Media...'
+                          : opponentSeat.camEnabled && arena.remoteFallbackFrame
+                            ? 'Live Video Stream · Timers Synced'
+                            : arena.webrtcStatus === 'fallback'
+                              ? 'Timers Synced · Connecting Relay'
+                              : 'Connecting Live Media...'
                       }
                       theme={theme}
+                      reactionBubble={reactionByPlayer[opponentSeat.playerId] ?? null}
+                      testId="arena-opponent-video"
                       overlayControls={
                         <button
                           type="button"
@@ -1437,6 +1626,109 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                 )}
               </section>
             </div>
+
+            {/* Compact Quick Chat & Emoji Bar */}
+            <section
+              data-testid="arena-quick-chat"
+              className="rounded-2xl border p-3.5 sm:p-4 flex flex-col gap-3"
+              style={{
+                backgroundColor: theme.ui.surface,
+                borderColor: theme.ui.border,
+              }}
+            >
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 shrink-0" style={{ color: theme.ui.accent }} />
+                  <span className="font-display font-semibold">Quick Chat</span>
+                </div>
+                <span className="hidden sm:inline" style={{ color: theme.ui.muted }}>
+                  Tap a quick phrase or emoji · Spacebar timer stays active
+                </span>
+              </div>
+
+              {/* Compact live message log */}
+              <div
+                ref={chatFeedRef}
+                data-testid="arena-chat-feed"
+                className="max-h-[104px] overflow-y-auto kubi-scroll rounded-xl border px-3 py-2 flex flex-col gap-1.5 text-xs"
+                style={{
+                  backgroundColor: theme.ui.surfaceSubtle,
+                  borderColor: theme.ui.border,
+                }}
+              >
+                {room.chat.length === 0 ? (
+                  <p className="py-1" style={{ color: theme.ui.muted }}>
+                    No messages yet — send a quick phrase or emoji below.
+                  </p>
+                ) : (
+                  room.chat.map((msg) => {
+                    const isMe = msg.playerId === mySeat?.playerId;
+                    return (
+                      <div key={msg.id} className="flex items-baseline gap-2 leading-snug">
+                        <span
+                          className="font-semibold shrink-0"
+                          style={{ color: isMe ? theme.ui.accent : theme.ui.text }}
+                        >
+                          {isMe ? `${msg.senderName} (You)` : msg.senderName}:
+                        </span>
+                        <span className={msg.kind === 'emoji' ? 'text-base leading-none' : ''}>
+                          {msg.text}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Preset Emojis + Quick Cubing Phrases */}
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Emoji reactions">
+                  {CHAT_EMOJI_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      data-testid={`arena-chat-btn-${preset.id}`}
+                      aria-label={`Send ${preset.label} reaction`}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        cubeAudio.playUiTick();
+                        arena.sendChatPreset(preset.id);
+                      }}
+                      className="h-9 w-9 rounded-lg border text-base inline-flex items-center justify-center transition-transform active:scale-95 cursor-pointer shrink-0"
+                      style={{
+                        backgroundColor: theme.ui.surfaceSubtle,
+                        borderColor: theme.ui.border,
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Quick chat phrases">
+                  {CHAT_TEXT_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      data-testid={`arena-chat-btn-${preset.id}`}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        cubeAudio.playUiTick();
+                        arena.sendChatPreset(preset.id);
+                      }}
+                      className="h-8 px-2.5 rounded-lg border text-xs font-medium whitespace-nowrap transition-transform active:scale-[0.98] cursor-pointer shrink-0"
+                      style={{
+                        backgroundColor: theme.ui.surfaceSubtle,
+                        borderColor: theme.ui.border,
+                        color: theme.ui.text,
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
 
             {/* Bottom Compact Round History Table */}
             <section

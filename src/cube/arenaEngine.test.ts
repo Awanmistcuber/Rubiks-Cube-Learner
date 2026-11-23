@@ -186,3 +186,42 @@ test('Disconnecting removes players from queues and cleans up empty rooms', () =
   assert.equal(guestLeft.remainingRoom, null);
   assert.equal(engine.getActiveRoomCount(), 0);
 });
+
+test('sendChatPreset enforces allowlisted text/emoji presets and rate limiting', () => {
+  let now = 50000;
+  const engine = new ArenaEngine({ now: () => now });
+  const created = engine.createPrivateRoom('p1', '3x3', { name: 'Alex' });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  engine.joinPrivateRoom('p2', created.data.room.roomCode, { name: 'Maya' });
+
+  // Valid text preset
+  const msg1 = engine.sendChatPreset('p1', 'glhf');
+  assert.equal(msg1.ok, true);
+  if (msg1.ok) {
+    assert.equal(msg1.data.message.text, 'Good luck, have fun!');
+    assert.equal(msg1.data.message.kind, 'text');
+    assert.equal(msg1.data.room.chat.length, 1);
+  }
+
+  // Immediate spam from same player within 300ms is rate-limited
+  now += 100;
+  const spam = engine.sendChatPreset('p1', 'e_fire');
+  assert.equal(spam.ok, false);
+  if (!spam.ok) assert.equal(spam.code, 'CHAT_RATE_LIMITED');
+
+  // Opponent can send an emoji immediately
+  const emoji = engine.sendChatPreset('p2', 'e_fire');
+  assert.equal(emoji.ok, true);
+  if (emoji.ok) {
+    assert.equal(emoji.data.message.text, '🔥');
+    assert.equal(emoji.data.message.kind, 'emoji');
+    assert.equal(emoji.data.room.chat.length, 2);
+  }
+
+  // Arbitrary/unknown preset ID is rejected
+  now += 500;
+  const bad = engine.sendChatPreset('p1', 'arbitrary_injection');
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.code, 'INVALID_CHAT_PRESET');
+});

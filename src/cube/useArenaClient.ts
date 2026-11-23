@@ -14,7 +14,14 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
 ];
+
+const FALLBACK_FRAME_INTERVAL_MS = 180;
+const FALLBACK_FRAME_WIDTH = 320;
+const FALLBACK_FRAME_HEIGHT = 180;
+const FALLBACK_FRAME_QUALITY = 0.55;
+const FALLBACK_FRAME_MAX_BYTES = 46000;
 
 function buildArenaWsUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -35,6 +42,7 @@ export interface UseArenaClientResult {
   // Media & WebRTC state
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
+  remoteFallbackFrame: string | null;
   camEnabled: boolean;
   micEnabled: boolean;
   remoteAudioMuted: boolean;
@@ -45,7 +53,7 @@ export interface UseArenaClientResult {
   toggleMic: () => Promise<void>;
   toggleRemoteAudioMuted: () => void;
 
-  // Room & Matchmaking actions
+  // Room, Chat & Matchmaking actions
   createRoom: (puzzleType: PuzzleType, name: string) => void;
   joinRoom: (roomCode: string, name: string) => void;
   leaveRoom: () => void;
@@ -54,6 +62,7 @@ export interface UseArenaClientResult {
   sendTimerPhase: (phase: 'idle' | 'holding' | 'armed' | 'running') => void;
   sendTimerFinish: (timeMs: number, penalty?: SolvePenalty) => void;
   sendTimerPenalty: (penalty: SolvePenalty, roundNumber?: number) => void;
+  sendChatPreset: (presetId: string) => void;
   requestNextRound: () => void;
   changeRoomPuzzle: (puzzleType: PuzzleType) => void;
 }
@@ -76,6 +85,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
   // Media & WebRTC
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [remoteFallbackFrame, setRemoteFallbackFrame] = useState<string | null>(null);
   const [camEnabled, setCamEnabled] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
   const [remoteAudioMuted, setRemoteAudioMuted] = useState(false);
@@ -92,7 +102,11 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const activePeerIdRef = useRef<string | null>(null);
+  const isPoliteRef = useRef<boolean>(false);
+  const makingOfferRef = useRef<boolean>(false);
+  const iceRestartedRef = useRef<boolean>(false);
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
+  const remoteTracksRef = useRef<Map<string, MediaStreamTrack>>(new Map());
   const mediaInitializedRef = useRef(false);
 
   playerIdRef.current = playerId;
@@ -110,6 +124,18 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     }
   }, []);
 
+  const rebuildRemoteStream = useCallback(() => {
+    const liveTracks = Array.from(remoteTracksRef.current.values()).filter(
+      (t) => t.readyState === 'live'
+    );
+    if (liveTracks.length === 0) {
+      setRemoteStream(null);
+      return;
+    }
+    // Always construct a fresh MediaStream instance so React reliably re-renders video/audio bindings
+    setRemoteStream(new MediaStream(liveTracks));
+  }, []);
+
   const closePeerConnection = useCallback(() => {
     if (pcRef.current) {
       try {
@@ -124,8 +150,13 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       pcRef.current = null;
     }
     activePeerIdRef.current = null;
+    isPoliteRef.current = false;
+    makingOfferRef.current = false;
+    iceRestartedRef.current = false;
     pendingIceRef.current = [];
+    remoteTracksRef.current.clear();
     setRemoteStream(null);
+    setRemoteFallbackFrame(null);
     setWebrtcStatus('idle');
   }, []);
 
@@ -147,21 +178,79 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     setMicEnabled(false);
   }, []);
 
-  const attachLocalTracksToPc = useCallback((pc: RTCPeerConnection, stream: MediaStream | null) => {
-    if (!stream) return;
-    const senders = pc.getSenders();
-    for (const track of stream.getTracks()) {
-      const existing = senders.find((s) => s.track?.kind === track.kind);
-      if (existing) {
-        existing.replaceTrack(track).catch(() => {});
-      } else {
-        pc.addTrack(track, stream);
+  /**
+   * Bind local video and audio tracks onto bidirectional sendrecv transceivers.
+   * Uses replaceTrack on existing transceivers so toggling camera/mic on after
+   * initial connection immediately streams without creating conflicting m-lines.
+   */
+  const attachLocalTracksToPc = useCallback(
+    async (
+      pc: RTCPeerConnection,
+      stream: MediaStream | null,
+      createMissing = false
+    ): Promise<boolean> => {
+      let needsRenegotiation = false;
+      const transceivers = pc.getTransceivers();
+
+      for (const kind of ['video', 'audio'] as const) {
+        const track =
+          kind === 'video'
+            ? stream?.getVideoTracks().find((t) => t.readyState === 'live') ?? null
+            : stream?.getAudioTracks().find((t) => t.readyState === 'live') ?? null;
+
+        const existing = transceivers.find(
+          (t) => t.receiver.track?.kind === kind || t.sender.track?.kind === kind
+        );
+
+        if (existing) {
+          const currentDir = existing.currentDirection;
+          const attachingNewTrack = Boolean(track && existing.sender.track !== track);
+          if (existing.direction !== 'sendrecv') {
+            try {
+              existing.direction = 'sendrecv';
+              needsRenegotiation = true;
+            } catch {
+              // ignore browser restrictions on closed/stopped transceivers
+            }
+          }
+          if (attachingNewTrack && currentDir !== 'sendrecv' && currentDir !== 'sendonly') {
+            needsRenegotiation = true;
+          }
+          if (existing.sender.track !== track) {
+            await existing.sender.replaceTrack(track).catch(() => {});
+          }
+        } else if (createMissing || track) {
+          try {
+            if (track && stream) {
+              pc.addTransceiver(track, { direction: 'sendrecv', streams: [stream] });
+            } else {
+              pc.addTransceiver(kind, { direction: 'sendrecv' });
+            }
+            needsRenegotiation = true;
+          } catch {
+            if (track && stream) {
+              try {
+                pc.addTrack(track, stream);
+                needsRenegotiation = true;
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
       }
-    }
-  }, []);
+
+      return needsRenegotiation;
+    },
+    []
+  );
+
+  const negotiateOfferRef = useRef<(peerId: string, iceRestart?: boolean) => Promise<void>>(
+    async () => {}
+  );
 
   const ensurePeerConnection = useCallback(
-    (peerId: string): RTCPeerConnection | null => {
+    (peerId: string, isOfferer: boolean): RTCPeerConnection | null => {
       if (typeof RTCPeerConnection === 'undefined') {
         setWebrtcStatus('fallback');
         return null;
@@ -173,42 +262,37 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
 
       closePeerConnection();
       activePeerIdRef.current = peerId;
+      isPoliteRef.current = !isOfferer;
+      iceRestartedRef.current = false;
       setWebrtcStatus('connecting');
 
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pcRef.current = pc;
 
-      // Always receive opponent's video/audio even if local user is in audio-only or avatar fallback mode
-      const stream = localStreamRef.current;
-      const hasLocalVideo = Boolean(stream?.getVideoTracks().length);
-      const hasLocalAudio = Boolean(stream?.getAudioTracks().length);
-
-      if (stream) {
-        attachLocalTracksToPc(pc, stream);
-      }
-      if (!hasLocalVideo) {
-        try {
-          pc.addTransceiver('video', { direction: 'recvonly' });
-        } catch {
-          // ignore browser differences
-        }
-      }
-      if (!hasLocalAudio) {
-        try {
-          pc.addTransceiver('audio', { direction: 'recvonly' });
-        } catch {
-          // ignore browser differences
-        }
+      // Offerer creates bidirectional sendrecv transceivers for both video and audio upfront.
+      // Answerer binds tracks right after setRemoteDescription(offer) so m-lines always match 1:1.
+      if (isOfferer) {
+        attachLocalTracksToPc(pc, localStreamRef.current, true);
       }
 
-      const incomingStream = new MediaStream();
       pc.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-          setRemoteStream(event.streams[0]);
-        } else if (event.track) {
-          incomingStream.addTrack(event.track);
-          setRemoteStream(new MediaStream(incomingStream.getTracks()));
-        }
+        const track = event.track;
+        if (!track) return;
+
+        remoteTracksRef.current.set(track.id, track);
+        rebuildRemoteStream();
+
+        track.onunmute = () => {
+          remoteTracksRef.current.set(track.id, track);
+          rebuildRemoteStream();
+        };
+        track.onmute = () => {
+          rebuildRemoteStream();
+        };
+        track.onended = () => {
+          remoteTracksRef.current.delete(track.id);
+          rebuildRemoteStream();
+        };
       };
 
       pc.onicecandidate = (event) => {
@@ -224,8 +308,16 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       const syncConnState = () => {
         const state: string = pc.connectionState || pc.iceConnectionState;
         if (state === 'connected' || state === 'completed') {
+          iceRestartedRef.current = false;
           setWebrtcStatus('connected');
-        } else if (state === 'failed' || state === 'disconnected') {
+        } else if (state === 'failed') {
+          if (!iceRestartedRef.current && !isPoliteRef.current && activePeerIdRef.current) {
+            iceRestartedRef.current = true;
+            negotiateOfferRef.current(activePeerIdRef.current, true);
+          } else {
+            setWebrtcStatus('fallback');
+          }
+        } else if (state === 'disconnected') {
           setWebrtcStatus('fallback');
         } else if (state === 'connecting' || state === 'checking' || state === 'new') {
           setWebrtcStatus('connecting');
@@ -237,15 +329,21 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
 
       return pc;
     },
-    [attachLocalTracksToPc, closePeerConnection, sendMessage]
+    [attachLocalTracksToPc, closePeerConnection, rebuildRemoteStream, sendMessage]
   );
 
   const negotiateOffer = useCallback(
-    async (peerId: string) => {
-      const pc = ensurePeerConnection(peerId);
+    async (peerId: string, iceRestart = false) => {
+      const pc = ensurePeerConnection(peerId, !isPoliteRef.current);
       if (!pc) return;
+      if (makingOfferRef.current) return;
+      if (pc.signalingState !== 'stable') return;
+
+      makingOfferRef.current = true;
       try {
-        const offer = await pc.createOffer();
+        await attachLocalTracksToPc(pc, localStreamRef.current, true);
+        const offer = await pc.createOffer(iceRestart ? { iceRestart: true } : undefined);
+        if (pc.signalingState !== 'stable') return;
         await pc.setLocalDescription(offer);
         sendMessage({
           type: 'webrtc:signal',
@@ -254,20 +352,38 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
         });
       } catch {
         setWebrtcStatus('fallback');
+      } finally {
+        makingOfferRef.current = false;
       }
     },
-    [ensurePeerConnection, sendMessage]
+    [attachLocalTracksToPc, ensurePeerConnection, sendMessage]
   );
+
+  negotiateOfferRef.current = negotiateOffer;
 
   const handleIncomingSignal = useCallback(
     async (fromPlayerId: string, signalType: 'offer' | 'answer' | 'ice', payload: unknown) => {
-      const pc = ensurePeerConnection(fromPlayerId);
+      const pc = ensurePeerConnection(fromPlayerId, false);
       if (!pc) return;
 
       try {
         if (signalType === 'offer' && payload && typeof payload === 'object') {
-          await pc.setRemoteDescription(new RTCSessionDescription(payload as RTCSessionDescriptionInit));
-          // Flush buffered ICE candidates
+          const offerCollision = makingOfferRef.current || pc.signalingState !== 'stable';
+          if (offerCollision) {
+            if (!isPoliteRef.current) {
+              // Impolite peer ignores colliding offer; polite peer will accept ours
+              return;
+            }
+            await pc.setLocalDescription({ type: 'rollback' }).catch(() => {});
+          }
+
+          await pc.setRemoteDescription(
+            new RTCSessionDescription(payload as RTCSessionDescriptionInit)
+          );
+
+          // Bind local camera/mic into the incoming offer's transceivers BEFORE creating answer
+          await attachLocalTracksToPc(pc, localStreamRef.current, false);
+
           for (const cand of pendingIceRef.current) {
             await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
           }
@@ -302,7 +418,20 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
         setWebrtcStatus('fallback');
       }
     },
-    [ensurePeerConnection, sendMessage]
+    [attachLocalTracksToPc, ensurePeerConnection, sendMessage]
+  );
+
+  const syncTracksToActivePeer = useCallback(
+    async (stream: MediaStream | null) => {
+      const pc = pcRef.current;
+      const peerId = activePeerIdRef.current;
+      if (!pc || !peerId) return;
+      const needsRenegotiation = await attachLocalTracksToPc(pc, stream, false);
+      if (needsRenegotiation && pc.signalingState === 'stable') {
+        await negotiateOffer(peerId);
+      }
+    },
+    [attachLocalTracksToPc, negotiateOffer]
   );
 
   const initMedia = useCallback(async () => {
@@ -327,6 +456,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       setMicEnabled(true);
       setMediaNotice(null);
       sendMessage({ type: 'media:status', camEnabled: true, micEnabled: true });
+      await syncTracksToActivePeer(stream);
       return;
     } catch {
       // Progressive fallback: try audio-only if camera is absent or blocked
@@ -341,6 +471,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
         setMicEnabled(true);
         setMediaNotice('No camera detected — competing in audio-only + avatar mode.');
         sendMessage({ type: 'media:status', camEnabled: false, micEnabled: true });
+        await syncTracksToActivePeer(audioStream);
       } catch {
         setLocalStream(null);
         setCamEnabled(false);
@@ -349,11 +480,11 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
         sendMessage({ type: 'media:status', camEnabled: false, micEnabled: false });
       }
     }
-  }, [sendMessage]);
+  }, [sendMessage, syncTracksToActivePeer]);
 
   const toggleCamera = useCallback(async () => {
     const stream = localStreamRef.current;
-    const videoTracks = stream?.getVideoTracks() ?? [];
+    const videoTracks = stream?.getVideoTracks().filter((t) => t.readyState === 'live') ?? [];
 
     if (videoTracks.length > 0) {
       const next = !camEnabledRef.current;
@@ -362,6 +493,9 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       }
       setCamEnabled(next);
       sendMessage({ type: 'media:status', camEnabled: next, micEnabled: micEnabledRef.current });
+      if (next && pcRef.current) {
+        await syncTracksToActivePeer(stream);
+      }
       return;
     }
 
@@ -379,7 +513,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       if (!newTrack) return;
 
       const combined = new MediaStream([
-        ...(localStreamRef.current?.getAudioTracks() ?? []),
+        ...(localStreamRef.current?.getAudioTracks().filter((t) => t.readyState === 'live') ?? []),
         newTrack,
       ]);
       localStreamRef.current = combined;
@@ -387,19 +521,15 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       setCamEnabled(true);
       setMediaNotice(null);
       sendMessage({ type: 'media:status', camEnabled: true, micEnabled: micEnabledRef.current });
-
-      if (pcRef.current && activePeerIdRef.current) {
-        attachLocalTracksToPc(pcRef.current, combined);
-        await negotiateOffer(activePeerIdRef.current);
-      }
+      await syncTracksToActivePeer(combined);
     } catch {
       setMediaNotice('Camera permission declined — staying in avatar mode.');
     }
-  }, [attachLocalTracksToPc, negotiateOffer, sendMessage]);
+  }, [sendMessage, syncTracksToActivePeer]);
 
   const toggleMic = useCallback(async () => {
     const stream = localStreamRef.current;
-    const audioTracks = stream?.getAudioTracks() ?? [];
+    const audioTracks = stream?.getAudioTracks().filter((t) => t.readyState === 'live') ?? [];
 
     if (audioTracks.length > 0) {
       const next = !micEnabledRef.current;
@@ -408,6 +538,9 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       }
       setMicEnabled(next);
       sendMessage({ type: 'media:status', camEnabled: camEnabledRef.current, micEnabled: next });
+      if (next && pcRef.current) {
+        await syncTracksToActivePeer(stream);
+      }
       return;
     }
 
@@ -424,7 +557,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       if (!newTrack) return;
 
       const combined = new MediaStream([
-        ...(localStreamRef.current?.getVideoTracks() ?? []),
+        ...(localStreamRef.current?.getVideoTracks().filter((t) => t.readyState === 'live') ?? []),
         newTrack,
       ]);
       localStreamRef.current = combined;
@@ -432,19 +565,59 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       setMicEnabled(true);
       setMediaNotice(null);
       sendMessage({ type: 'media:status', camEnabled: camEnabledRef.current, micEnabled: true });
-
-      if (pcRef.current && activePeerIdRef.current) {
-        attachLocalTracksToPc(pcRef.current, combined);
-        await negotiateOffer(activePeerIdRef.current);
-      }
+      await syncTracksToActivePeer(combined);
     } catch {
       setMediaNotice('Microphone permission declined.');
     }
-  }, [attachLocalTracksToPc, negotiateOffer, sendMessage]);
+  }, [sendMessage, syncTracksToActivePeer]);
 
   const toggleRemoteAudioMuted = useCallback(() => {
     setRemoteAudioMuted((prev) => !prev);
   }, []);
+
+  // Automatic WebSocket video-frame relay while native WebRTC P2P is connecting or blocked by strict NAT.
+  // Automatically pauses as soon as native WebRTC P2P reaches 'connected'.
+  const hasOpponentInRoom = Boolean(room && room.players.length === 2);
+  useEffect(() => {
+    if (!active || !hasOpponentInRoom || !camEnabled || !localStream) {
+      return;
+    }
+    if (webrtcStatus === 'connected') {
+      return;
+    }
+    const videoTracks = localStream.getVideoTracks().filter((t) => t.readyState === 'live');
+    if (videoTracks.length === 0) return;
+
+    const captureVideo = document.createElement('video');
+    captureVideo.muted = true;
+    captureVideo.playsInline = true;
+    captureVideo.autoplay = true;
+    captureVideo.srcObject = new MediaStream(videoTracks);
+    captureVideo.play().catch(() => {});
+
+    const canvas = document.createElement('canvas');
+    canvas.width = FALLBACK_FRAME_WIDTH;
+    canvas.height = FALLBACK_FRAME_HEIGHT;
+    const ctx = canvas.getContext('2d');
+
+    const intervalId = window.setInterval(() => {
+      if (!ctx || captureVideo.readyState < 2 || captureVideo.videoWidth === 0) return;
+      try {
+        ctx.drawImage(captureVideo, 0, 0, FALLBACK_FRAME_WIDTH, FALLBACK_FRAME_HEIGHT);
+        const dataUrl = canvas.toDataURL('image/jpeg', FALLBACK_FRAME_QUALITY);
+        if (dataUrl.length <= FALLBACK_FRAME_MAX_BYTES) {
+          sendMessage({ type: 'webrtc:frame', dataUrl });
+        }
+      } catch {
+        // ignore transient canvas capture issues
+      }
+    }, FALLBACK_FRAME_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+      captureVideo.srcObject = null;
+    };
+  }, [active, hasOpponentInRoom, camEnabled, localStream, webrtcStatus, sendMessage]);
 
   // WebSocket lifecycle + automatic reconnect while Arena modal is open
   useEffect(() => {
@@ -515,13 +688,31 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
             const me = msg.room.players.find((p) => p.playerId === playerIdRef.current);
             const peer = msg.room.players.find((p) => p.playerId !== playerIdRef.current);
 
+            if (
+              me &&
+              (msg.event === 'created' || msg.event === 'joined' || msg.event === 'matched') &&
+              (me.camEnabled !== camEnabledRef.current || me.micEnabled !== micEnabledRef.current)
+            ) {
+              sendMessage({
+                type: 'media:status',
+                camEnabled: camEnabledRef.current,
+                micEnabled: micEnabledRef.current,
+              });
+            }
+
             if (!peer) {
               closePeerConnection();
-            } else if (activePeerIdRef.current !== peer.playerId) {
-              // Deterministic WebRTC initiation: seat 0 initiates offer, seat 1 prepares to answer
-              ensurePeerConnection(peer.playerId);
-              if (me && me.seat === 0) {
-                negotiateOffer(peer.playerId);
+            } else {
+              if (!peer.camEnabled) {
+                setRemoteFallbackFrame(null);
+              }
+              if (activePeerIdRef.current !== peer.playerId) {
+                // Deterministic WebRTC initiation: seat 0 creates offer, seat 1 answers politely
+                const isOfferer = Boolean(me && me.seat === 0);
+                ensurePeerConnection(peer.playerId, isOfferer);
+                if (isOfferer) {
+                  negotiateOffer(peer.playerId);
+                }
               }
             }
             break;
@@ -533,6 +724,12 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
           }
           case 'webrtc:signal': {
             handleIncomingSignal(msg.fromPlayerId, msg.signalType, msg.payload);
+            break;
+          }
+          case 'webrtc:frame': {
+            if (msg.fromPlayerId === activePeerIdRef.current && typeof msg.dataUrl === 'string') {
+              setRemoteFallbackFrame(msg.dataUrl);
+            }
             break;
           }
           case 'error': {
@@ -589,6 +786,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     handleIncomingSignal,
     initMedia,
     negotiateOffer,
+    sendMessage,
     stopLocalMedia,
   ]);
 
@@ -675,6 +873,13 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     [sendMessage]
   );
 
+  const sendChatPreset = useCallback(
+    (presetId: string) => {
+      sendMessage({ type: 'chat:send', presetId });
+    },
+    [sendMessage]
+  );
+
   const requestNextRound = useCallback(() => {
     sendMessage({ type: 'round:next' });
   }, [sendMessage]);
@@ -698,6 +903,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     serverClockOffsetMs,
     localStream,
     remoteStream,
+    remoteFallbackFrame,
     camEnabled,
     micEnabled,
     remoteAudioMuted,
@@ -715,6 +921,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     sendTimerPhase,
     sendTimerFinish,
     sendTimerPenalty,
+    sendChatPreset,
     requestNextRound,
     changeRoomPuzzle,
   };

@@ -368,7 +368,7 @@ async function createServer() {
   }
 
   const httpServer = http.createServer(app);
-  const arenaWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  const arenaWss = new WebSocketServer({ noServer: true, maxPayload: 96 * 1024 });
 
   const sendWs = (ws: WebSocket | undefined, payload: ArenaServerMessage) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -631,6 +631,19 @@ async function createServer() {
           break;
         }
 
+        case 'chat:send': {
+          const presetId = typeof msg.presetId === 'string' ? msg.presetId : '';
+          const res = arenaEngine.sendChatPreset(playerId, presetId);
+          if (!res.ok) {
+            if (res.code !== 'CHAT_RATE_LIMITED') {
+              sendWs(ws, { type: 'error', code: res.code, message: res.message });
+            }
+            return;
+          }
+          broadcastRoom(res.data.room, 'updated');
+          break;
+        }
+
         case 'webrtc:signal': {
           if (!VALID_SIGNAL_TYPES.has(msg.signalType)) return;
           if (msg.payload !== null && typeof msg.payload !== 'object') return;
@@ -642,6 +655,21 @@ async function createServer() {
             fromPlayerId: playerId,
             signalType: msg.signalType,
             payload: msg.payload,
+          });
+          break;
+        }
+
+        case 'webrtc:frame': {
+          if (typeof msg.dataUrl !== 'string') return;
+          if (!msg.dataUrl.startsWith('data:image/jpeg;base64,')) return;
+          if (msg.dataUrl.length > 48000) return;
+          // Strictly isolate fallback video frames to the verified peer in the same 2-player room
+          const peerId = arenaEngine.getPeerPlayerId(playerId);
+          if (!peerId) return;
+          sendWs(arenaSockets.get(peerId), {
+            type: 'webrtc:frame',
+            fromPlayerId: playerId,
+            dataUrl: msg.dataUrl,
           });
           break;
         }
