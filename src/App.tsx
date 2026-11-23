@@ -58,6 +58,7 @@ import {
   solveCubeWithMethod,
   type MethodSolvePlan,
 } from './cube/methodSolver';
+import { buildInternalViewHref, parseInitialSeoRoute, syncDocumentSeo, type SeoViewId } from './cube/seo';
 import { buildSnapshotFilename, triggerPngDownload } from './cube/snapshot';
 import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
 import {
@@ -110,15 +111,20 @@ export default function App() {
   const canvasMountRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<ThreeCubeEngine | null>(null);
 
-  // Core UI state (restored from localStorage + cookies)
-  const [gameState, setGameState] = useState<GameState>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('autostart') === '1') return 'playing';
-    }
-    return 'title';
-  });
+  const [initialSeoRoute] = useState(() =>
+    typeof window !== 'undefined'
+      ? parseInitialSeoRoute(window.location.search)
+      : { view: 'home' as SeoViewId, autoStart: false }
+  );
+
+  // Core UI state (restored from URL deep-link, localStorage + cookies)
+  const [gameState, setGameState] = useState<GameState>(() =>
+    initialSeoRoute.autoStart ? 'playing' : 'title'
+  );
   const [puzzleType, setPuzzleType] = useState<PuzzleType>(() => {
+    if (initialSeoRoute.puzzle && VALID_PUZZLES_SET.has(initialSeoRoute.puzzle)) {
+      return initialSeoRoute.puzzle;
+    }
     const saved = loadStudioPref('puzzle') as PuzzleType | null;
     return saved && VALID_PUZZLES_SET.has(saved) ? saved : '3x3';
   });
@@ -132,7 +138,9 @@ export default function App() {
   const [soundscape, setSoundscape] = useState<AmbientSoundscapeId>(initialAmbient.soundscape);
   const [ambientVolume, setAmbientVolume] = useState<number>(initialAmbient.volume);
 
-  const [activeTab, setActiveTab] = useState<DockTab>('play');
+  const [activeTab, setActiveTab] = useState<DockTab>(() =>
+    initialSeoRoute.view === 'tutorials' ? 'learn' : 'play'
+  );
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -152,7 +160,11 @@ export default function App() {
   const snapshotToastTimerRef = useRef<number | null>(null);
 
   // Built-in Stopwatch & Timing Analytics Dashboard state
-  const [timerModalTab, setTimerModalTab] = useState<TimerDashboardTab | null>(null);
+  const [timerModalTab, setTimerModalTab] = useState<TimerDashboardTab | null>(() => {
+    if (initialSeoRoute.view === 'timer') return 'stopwatch';
+    if (initialSeoRoute.view === 'daily') return 'daily';
+    return null;
+  });
   const [solveRecords, setSolveRecords] = useState<SolveRecord[]>(() => loadSolveRecords());
   const [activeDailyDateKey, setActiveDailyDateKey] = useState<string | null>(null);
 
@@ -220,10 +232,22 @@ export default function App() {
   );
   const theme = previewPalette ?? savedTheme;
 
-  // Sync CSS theme variables and live 3D WebGL scene theme (supports live custom sticker previews)
+  // Sync CSS theme variables, body state, and dynamic SEO title/meta/canonical
   useEffect(() => {
     document.body.dataset.state = gameState;
   }, [gameState]);
+
+  useEffect(() => {
+    let activeSeoView: SeoViewId = 'home';
+    if (timerModalTab === 'daily') {
+      activeSeoView = 'daily';
+    } else if (timerModalTab === 'stopwatch' || timerModalTab === 'analytics') {
+      activeSeoView = 'timer';
+    } else if (gameState !== 'title') {
+      activeSeoView = activeTab === 'learn' ? 'tutorials' : 'solver';
+    }
+    syncDocumentSeo(activeSeoView);
+  }, [gameState, activeTab, timerModalTab]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -599,6 +623,39 @@ export default function App() {
     document.body.dataset.state = 'playing';
     setGameState('playing');
   }, [resetProgressTrackers]);
+
+  const handleNavigateSeoView = useCallback(
+    (view: SeoViewId) => {
+      if (typeof window !== 'undefined') {
+        try {
+          window.history.replaceState(null, '', buildInternalViewHref(view));
+        } catch {
+          // ignore history errors in sandboxed iframes
+        }
+      }
+      handleStartStudio();
+      setDockCollapsed(false);
+      if (view === 'tutorials') {
+        setTimerModalTab(null);
+        setActiveTab('learn');
+        activeTabRef.current = 'learn';
+      } else if (view === 'timer') {
+        setActiveTab('play');
+        activeTabRef.current = 'play';
+        setTimerModalTab('stopwatch');
+      } else if (view === 'daily') {
+        setActiveTab('play');
+        activeTabRef.current = 'play';
+        setTimerModalTab('daily');
+      } else {
+        setTimerModalTab(null);
+        setActiveTab('play');
+        activeTabRef.current = 'play';
+      }
+      syncDocumentSeo(view);
+    },
+    [handleStartStudio]
+  );
 
   const handleSelectPuzzle = useCallback(
     (nextPuzzle: PuzzleType) => {
@@ -1644,6 +1701,7 @@ export default function App() {
           onSelectPuzzle={handleSelectPuzzle}
           onSelectTheme={handleSelectTheme}
           onStart={handleStartStudio}
+          onNavigateView={handleNavigateSeoView}
         />
       )}
 

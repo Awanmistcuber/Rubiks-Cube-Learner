@@ -62,6 +62,28 @@ async function createServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
+  // Prevent search crawlers from indexing raw JSON API endpoints
+  app.use('/api', (_req, res, next) => {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    next();
+  });
+
+  // Explicitly serve robots.txt and sitemap.xml with crisp crawler headers at both root and GitHub Pages subpath
+  const publicDir = path.resolve(__dirname, isProd ? 'dist' : 'public');
+  const sendSeoStaticFile = (filename: string, contentType: string) => (_req: express.Request, res: express.Response) => {
+    const filePath = path.join(publicDir, filename);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).type('text/plain').send('Not Found');
+      return;
+    }
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.sendFile(filePath);
+  };
+
+  app.get(['/robots.txt', '/Rubiks-Cube-Learner/robots.txt'], sendSeoStaticFile('robots.txt', 'text/plain; charset=utf-8'));
+  app.get(['/sitemap.xml', '/Rubiks-Cube-Learner/sitemap.xml'], sendSeoStaticFile('sitemap.xml', 'application/xml; charset=utf-8'));
+
   let dailyEntries: DailyLeaderboardEntry[] = loadDailyStore();
 
   const buildDailyPayload = (puzzleType: PuzzleType, clientId?: string) => {
@@ -310,8 +332,14 @@ async function createServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
+    app.use('/Rubiks-Cube-Learner', express.static(distPath));
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
+      // Avoid soft-404 HTML responses for missing static files (e.g., .xml, .txt, .png, .js, .css)
+      if (/\.[a-z0-9]{2,6}$/i.test(req.path) && !req.path.endsWith('.html')) {
+        res.status(404).type('text/plain').send('Not Found');
+        return;
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

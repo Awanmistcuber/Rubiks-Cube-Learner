@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowRight } from 'lucide-react';
 import { PUZZLE_META } from '../cube/curriculum';
+import { buildInternalViewHref, type SeoViewId } from '../cube/seo';
 import { THEME_LIST } from '../cube/themes';
 import type { PuzzleType, ThemePalette } from '../cube/types';
 
@@ -10,9 +11,33 @@ interface TitleScreenProps {
   onSelectPuzzle: (p: PuzzleType) => void;
   onSelectTheme: (t: string) => void;
   onStart: () => void;
+  onNavigateView: (view: SeoViewId) => void;
 }
 
 const PUZZLES: PuzzleType[] = ['2x2', '3x3', '4x4', 'mirror'];
+
+const INTERNAL_SEO_LINKS: { view: SeoViewId; label: string; title: string }[] = [
+  {
+    view: 'tutorials',
+    label: 'Cube Tutorials',
+    title: "Interactive 3D Rubik's Cube tutorials (Beginner, CFOP, Roux, ZZ)",
+  },
+  {
+    view: 'timer',
+    label: 'Speedcube Timer',
+    title: 'WCA speedcubing timer with Ao5 & Ao12 analytics',
+  },
+  {
+    view: 'solver',
+    label: '3D Method Solver',
+    title: 'Multi-method CFOP, Roux, ZZ & Beginner 3D cube solver',
+  },
+  {
+    view: 'daily',
+    label: 'Daily Scramble',
+    title: "Daily UTC Rubik's Cube scramble challenge and leaderboard",
+  },
+];
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
   theme,
@@ -20,8 +45,17 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   onSelectPuzzle,
   onSelectTheme,
   onStart,
+  onNavigateView,
 }) => {
   const activeMeta = PUZZLE_META[puzzleType];
+
+  const handleLinkClick = (e: React.MouseEvent<HTMLAnchorElement>, view: SeoViewId) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    onNavigateView(view);
+  };
 
   return (
     <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between px-4 sm:px-8 lg:px-12 kubi-safe-top kubi-safe-bottom">
@@ -126,7 +160,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 Kubi Studio
               </h1>
               <p className="text-xs sm:text-sm mt-1" style={{ color: theme.ui.muted }}>
-                Interactive 3D Twist Puzzle Lab
+                3D Rubik&apos;s Cube Tutorials, Solver &amp; Timer
               </p>
             </div>
           </div>
@@ -135,8 +169,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             className="text-sm sm:text-[15px] leading-relaxed mb-5"
             style={{ color: theme.ui.muted }}
           >
-            Learn to solve 2×2, 3×3, 4×4, and Mirror cubes step by step with magnetic 3D physics,
-            visual layer guides, and exploded-core inspection.
+            Practice speedcubing on 2×2, 3×3, 4×4, and Mirror cubes with Beginner, CFOP, Roux, and
+            ZZ tutorials, a WCA timer, and live 3D move tracking.
           </p>
 
           {/* Interactive Puzzle Preview Selector */}
@@ -193,6 +227,26 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             <span>Start Studio</span>
             <ArrowRight className="w-4 h-4" />
           </button>
+
+          {/* Crawlable Internal Links to Core Speedcubing Views */}
+          <nav
+            aria-label="Explore studio tools"
+            className="mt-4 pt-3.5 border-t grid grid-cols-2 gap-x-3 gap-y-1.5"
+            style={{ borderColor: theme.ui.border }}
+          >
+            {INTERNAL_SEO_LINKS.map((item) => (
+              <a
+                key={item.view}
+                href={buildInternalViewHref(item.view)}
+                title={item.title}
+                onClick={(e) => handleLinkClick(e, item.view)}
+                className="text-xs font-medium py-1 rounded-md transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 truncate"
+                style={{ color: theme.ui.muted }}
+              >
+                {item.label} →
+              </a>
+            ))}
+          </nav>
         </div>
       </div>
 

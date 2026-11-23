@@ -1,0 +1,6 @@
+# Kubi Studio — Crawlability & Search Engine Indexing Rules
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://awanmistcuber.github.io/Rubiks-Cube-Learner/sitemap.xml
