@@ -1309,7 +1309,8 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   <div className="grid grid-cols-2 gap-1.5">
                     {STICKER_PATTERN_TEMPLATES.map((tpl) => {
                       const active = tpl.id === activePatternId;
-                      const previewGrid = getPatternPreviewGrid(tpl.id, 'pz', 3);
+                      const previewGrid = getPatternPreviewGrid(tpl.id, 'pz', puzzleType);
+                      const gridSize = previewGrid.length;
                       return (
                         <button
                           key={tpl.id}
@@ -1327,8 +1328,9 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         >
                           <span
                             aria-hidden="true"
-                            className="w-6 h-6 rounded-[5px] p-[2px] grid grid-cols-3 gap-[1.5px] shrink-0 border"
+                            className="w-6 h-6 rounded-[5px] p-[2px] grid gap-[1.5px] shrink-0 border"
                             style={{
+                              gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`,
                               backgroundColor: hexNumberToCss(theme.scene.chassisColor),
                               borderColor: theme.ui.border,
                             }}

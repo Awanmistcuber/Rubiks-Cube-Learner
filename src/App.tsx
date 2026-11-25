@@ -60,7 +60,7 @@ import {
   solveCubeWithMethod,
   type MethodSolvePlan,
 } from './cube/methodSolver';
-import type { StickerPatternId } from './cube/patternTemplates';
+import { getPatternMoves, type StickerPatternId } from './cube/patternTemplates';
 import { buildInternalViewHref, parseInitialSeoRoute, syncDocumentSeo, type SeoViewId } from './cube/seo';
 import { buildSnapshotFilename, triggerPngDownload } from './cube/snapshot';
 import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
@@ -408,6 +408,9 @@ export default function App() {
           if (solvedNow && !handledGuideArrow) {
             engine.clearGuideArrow();
             setHintMove(null);
+          }
+          if (solvedNow) {
+            setActivePatternId('solved');
           }
 
           // Trigger Victory celebration when a scrambled cube is solved in Play mode!
@@ -1306,10 +1309,23 @@ export default function App() {
       if (!engine || isBusy) return;
       cubeAudio.playUiTick();
       engine.clearGuideArrow();
-      resetProgressTrackers();
       setVictorySnapshot(null);
-      engine.applyStickerPattern(patternId, true);
+
+      if (patternId === 'solved') {
+        engine.loadPuzzle(puzzleRef.current, true);
+        resetProgressTrackers();
+        return;
+      }
+
+      const moves = getPatternMoves(patternId, puzzleRef.current);
+      engine.loadPuzzle(puzzleRef.current, false);
+      resetProgressTrackers();
       setActivePatternId(patternId);
+
+      if (moves.length > 0) {
+        setIsBusy(true);
+        engine.enqueueMoves(moves, 1.85);
+      }
     },
     [isBusy, resetProgressTrackers]
   );

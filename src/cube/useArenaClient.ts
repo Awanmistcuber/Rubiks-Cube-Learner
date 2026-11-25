@@ -7,6 +7,10 @@ import type {
 import type { SolvePenalty } from './timerStats';
 import type { PuzzleType } from './types';
 import { getBackendConfig } from './backendConfig';
+import {
+  computeAspectPreservedFrameSize,
+  DEFAULT_FALLBACK_MAX_DIMENSION,
+} from './videoFraming';
 
 export type ArenaConnectionState =
   | 'connecting'
@@ -24,11 +28,18 @@ const ICE_SERVERS: RTCIceServer[] = [
 ];
 
 const FALLBACK_FRAME_INTERVAL_MS = 180;
-const FALLBACK_FRAME_WIDTH = 320;
-const FALLBACK_FRAME_HEIGHT = 180;
+const FALLBACK_FRAME_MAX_DIM = DEFAULT_FALLBACK_MAX_DIMENSION;
 const FALLBACK_FRAME_QUALITY = 0.55;
 const FALLBACK_FRAME_MAX_BYTES = 46000;
 const WS_KEEPALIVE_INTERVAL_MS = 25000;
+
+function getCameraVideoConstraints(): MediaTrackConstraints {
+  const isPortraitViewport =
+    typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
+  return isPortraitViewport
+    ? { width: { ideal: 480 }, height: { ideal: 640 }, facingMode: 'user' }
+    : { width: { ideal: 640 }, height: { ideal: 360 }, facingMode: 'user' };
+}
 
 export interface UseArenaClientResult {
   connectionState: ArenaConnectionState;
@@ -449,7 +460,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 360 }, facingMode: 'user' },
+        video: getCameraVideoConstraints(),
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       localStreamRef.current = stream;
@@ -508,7 +519,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     }
     try {
       const vidStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 360 }, facingMode: 'user' },
+        video: getCameraVideoConstraints(),
         audio: false,
       });
       const newTrack = vidStream.getVideoTracks()[0];
@@ -598,14 +609,30 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     captureVideo.play().catch(() => {});
 
     const canvas = document.createElement('canvas');
-    canvas.width = FALLBACK_FRAME_WIDTH;
-    canvas.height = FALLBACK_FRAME_HEIGHT;
+    canvas.width = FALLBACK_FRAME_MAX_DIM;
+    canvas.height = Math.round((FALLBACK_FRAME_MAX_DIM * 9) / 16);
     const ctx = canvas.getContext('2d');
 
     const intervalId = window.setInterval(() => {
-      if (!ctx || captureVideo.readyState < 2 || captureVideo.videoWidth === 0) return;
+      if (
+        !ctx ||
+        captureVideo.readyState < 2 ||
+        captureVideo.videoWidth === 0 ||
+        captureVideo.videoHeight === 0
+      ) {
+        return;
+      }
       try {
-        ctx.drawImage(captureVideo, 0, 0, FALLBACK_FRAME_WIDTH, FALLBACK_FRAME_HEIGHT);
+        const { width, height } = computeAspectPreservedFrameSize(
+          captureVideo.videoWidth,
+          captureVideo.videoHeight,
+          FALLBACK_FRAME_MAX_DIM
+        );
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        ctx.drawImage(captureVideo, 0, 0, width, height);
         const dataUrl = canvas.toDataURL('image/jpeg', FALLBACK_FRAME_QUALITY);
         if (dataUrl.length <= FALLBACK_FRAME_MAX_BYTES) {
           sendMessage({ type: 'webrtc:frame', dataUrl });

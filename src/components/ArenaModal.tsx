@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
   Copy,
+  History,
   Link2,
   LogOut,
+  Maximize2,
   MessageSquare,
   Mic,
   MicOff,
+  Minimize2,
   RefreshCw,
   Search,
   Swords,
@@ -81,8 +84,13 @@ interface VideoFeedBoxProps {
   subtitle: string;
   theme: ThemePalette;
   reactionBubble?: ReactionBubble | null;
+  reactionClassName?: string;
   overlayControls?: React.ReactNode;
+  topLeftBadge?: React.ReactNode;
+  containerClassName?: string;
+  compact?: boolean;
   testId?: string;
+  children?: React.ReactNode;
 }
 
 const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
@@ -97,10 +105,16 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
   subtitle,
   theme,
   reactionBubble = null,
+  reactionClassName = 'top-2.5 right-2.5',
   overlayControls,
+  topLeftBadge,
+  containerClassName = 'w-full aspect-video max-h-[240px] lg:max-h-[280px] rounded-xl',
+  compact = false,
   testId,
+  children,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const bgVideoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [videoHasFrame, setVideoHasFrame] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
@@ -120,19 +134,21 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
     setVideoHasFrame(false);
   }, [stream, camOn]);
 
-  // Always keep <video> muted so Chrome/Safari/Edge autoplay NEVER stalls on a black frame.
+  // Keep both foreground and blurred-background <video> elements muted so autoplay NEVER stalls.
   // Remote audio is routed through the dedicated <audio> element below.
   useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-    if (stream && canRenderVideoElement) {
-      if (el.srcObject !== stream) {
-        el.srcObject = stream;
+    const elements = [videoRef.current, bgVideoRef.current];
+    for (const el of elements) {
+      if (!el) continue;
+      if (stream && canRenderVideoElement) {
+        if (el.srcObject !== stream) {
+          el.srcObject = stream;
+        }
+        el.muted = true;
+        el.play().catch(() => {});
+      } else {
+        el.srcObject = null;
       }
-      el.muted = true;
-      el.play().catch(() => {});
-    } else {
-      el.srcObject = null;
     }
   }, [stream, canRenderVideoElement]);
 
@@ -179,44 +195,72 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
   return (
     <div
       data-testid={testId}
-      className="relative w-full aspect-video max-h-[240px] lg:max-h-[280px] rounded-xl overflow-hidden border flex items-center justify-center"
+      className={`relative overflow-hidden border flex items-center justify-center ${containerClassName}`}
       style={{
         backgroundColor: '#121318',
         borderColor: theme.ui.border,
       }}
     >
+      {/* Live WebRTC video: soft blurred ambient fill + crisp aspect-preserving foreground */}
       {canRenderVideoElement && (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted={true}
-          onLoadedMetadata={(e) => {
-            e.currentTarget.play().catch(() => {});
-            handleVideoFrameCheck(e.currentTarget);
-          }}
-          onLoadedData={(e) => handleVideoFrameCheck(e.currentTarget)}
-          onPlaying={(e) => handleVideoFrameCheck(e.currentTarget)}
-          onResize={(e) => handleVideoFrameCheck(e.currentTarget)}
-          className={`w-full h-full object-cover ${mirrored ? '-scale-x-100' : ''} ${
-            showFallbackImage ? 'opacity-0 absolute inset-0' : 'opacity-100'
-          }`}
-        />
+        <>
+          <video
+            ref={bgVideoRef}
+            aria-hidden="true"
+            autoPlay
+            playsInline
+            muted={true}
+            className={`pointer-events-none absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55 brightness-75 ${
+              mirrored ? '-scale-x-100' : ''
+            } ${showFallbackImage ? 'opacity-0' : ''}`}
+          />
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted={true}
+            onLoadedMetadata={(e) => {
+              e.currentTarget.play().catch(() => {});
+              handleVideoFrameCheck(e.currentTarget);
+            }}
+            onLoadedData={(e) => handleVideoFrameCheck(e.currentTarget)}
+            onPlaying={(e) => handleVideoFrameCheck(e.currentTarget)}
+            onResize={(e) => handleVideoFrameCheck(e.currentTarget)}
+            className={`relative z-[1] w-full h-full object-contain ${
+              mirrored ? '-scale-x-100' : ''
+            } ${showFallbackImage ? 'opacity-0 absolute inset-0' : 'opacity-100'}`}
+          />
+        </>
       )}
 
+      {/* WebSocket fallback JPEG frame relay: blurred pillarbox fill + unstretched object-contain */}
       {showFallbackImage && fallbackFrame && (
-        <img
-          data-testid={testId ? `${testId}-fallback-img` : undefined}
-          src={fallbackFrame}
-          alt={`${name} live camera feed`}
-          className="w-full h-full object-cover"
-        />
+        <>
+          <img
+            aria-hidden="true"
+            src={fallbackFrame}
+            alt=""
+            className="pointer-events-none absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55 brightness-75"
+          />
+          <img
+            data-testid={testId ? `${testId}-fallback-img` : undefined}
+            src={fallbackFrame}
+            alt={`${name} live camera feed`}
+            className="relative z-[1] w-full h-full object-contain"
+          />
+        </>
       )}
 
       {showAvatar && (
-        <div className="flex flex-col items-center justify-center gap-2 px-4 pb-10 text-center">
+        <div
+          className={`relative z-[1] flex flex-col items-center justify-center text-center ${
+            compact ? 'gap-1 px-2 pb-5' : 'gap-2 px-4 pb-10'
+          }`}
+        >
           <div
-            className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center font-display text-xl sm:text-2xl font-bold border"
+            className={`rounded-2xl flex items-center justify-center font-display font-bold border ${
+              compact ? 'w-9 h-9 text-xs' : 'w-14 h-14 sm:w-16 sm:h-16 text-xl sm:text-2xl'
+            }`}
             style={{
               backgroundColor: 'rgba(255,255,255,0.08)',
               borderColor: 'rgba(255,255,255,0.16)',
@@ -225,18 +269,25 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
           >
             {getInitials(name)}
           </div>
-          <p className="text-[11px] font-medium" style={{ color: 'rgba(244,244,246,0.72)' }}>
-            {camOn
-              ? 'Connecting camera...'
-              : micOn
-                ? 'Audio Only · Camera Off'
-                : 'Avatar Mode · Camera & Mic Off'}
-          </p>
+          {!compact && (
+            <p className="text-[11px] font-medium" style={{ color: 'rgba(244,244,246,0.72)' }}>
+              {camOn
+                ? 'Connecting camera...'
+                : micOn
+                  ? 'Audio Only · Camera Off'
+                  : 'Avatar Mode · Camera & Mic Off'}
+            </p>
+          )}
         </div>
       )}
 
       {/* Dedicated remote audio element (prevents autoplay policy from blocking video frames) */}
       {!isLocal && <audio ref={audioRef} autoPlay playsInline muted={muted} className="hidden" />}
+
+      {/* Optional Top-Left Overlay Badge (e.g. Mobile Opponent Live Timer) */}
+      {topLeftBadge && (
+        <div className="absolute top-2.5 left-2.5 z-20">{topLeftBadge}</div>
+      )}
 
       {/* One-tap audio unlock if browser autoplay policy paused remote audio */}
       {!isLocal && audioBlocked && !muted && (
@@ -246,7 +297,7 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
             e.currentTarget.blur();
             handleUnlockAudio();
           }}
-          className="absolute top-2.5 left-2.5 z-10 h-8 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer border"
+          className={`absolute ${topLeftBadge ? 'top-14' : 'top-2.5'} left-2.5 z-20 h-9 px-2.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer border`}
           style={{
             backgroundColor: 'rgba(18, 19, 24, 0.85)',
             borderColor: 'rgba(255, 255, 255, 0.25)',
@@ -263,8 +314,14 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
         <div
           key={reactionBubble.id}
           data-testid={testId ? `${testId}-reaction` : undefined}
-          className={`pointer-events-none absolute top-2.5 right-2.5 z-10 max-w-[78%] rounded-xl border px-3 py-1.5 shadow-lg ${
-            reactionBubble.kind === 'emoji' ? 'text-2xl leading-none py-1.5 px-2.5' : 'text-xs font-semibold'
+          className={`pointer-events-none absolute ${reactionClassName} z-20 max-w-[78%] rounded-xl border shadow-lg ${
+            compact
+              ? reactionBubble.kind === 'emoji'
+                ? 'text-lg leading-none px-1.5 py-1'
+                : 'text-[10px] font-semibold px-2 py-1'
+              : reactionBubble.kind === 'emoji'
+                ? 'text-2xl leading-none py-1.5 px-2.5'
+                : 'text-xs font-semibold px-3 py-1.5'
           }`}
           style={{
             backgroundColor: 'rgba(18, 19, 24, 0.86)',
@@ -276,13 +333,30 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
         </div>
       )}
 
-      {/* Measured contrast scrim for video/avatar overlay legibility */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
+      {/* Optional extra overlay children (e.g. Floating Self-View PiP) */}
+      {children}
 
-      <div className="absolute inset-x-0 bottom-0 px-3 py-2.5 flex items-end justify-between gap-2">
+      {/* Measured contrast scrim for video/avatar overlay legibility */}
+      <div
+        className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] bg-gradient-to-t from-black/80 via-black/40 to-transparent ${
+          compact ? 'h-10' : 'h-20'
+        }`}
+      />
+
+      <div
+        className={`absolute inset-x-0 bottom-0 z-10 flex items-end justify-between gap-1.5 ${
+          compact ? 'px-2 py-1.5' : 'px-3 py-2.5'
+        }`}
+      >
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-white truncate">{name}</div>
-          <div className="text-[11px] text-white/75 truncate">{subtitle}</div>
+          <div
+            className={`font-semibold text-white truncate ${
+              compact ? 'text-[11px] leading-tight' : 'text-sm'
+            }`}
+          >
+            {name}
+          </div>
+          {!compact && <div className="text-[11px] text-white/75 truncate">{subtitle}</div>}
         </div>
         {overlayControls && (
           <div className="flex items-center gap-1.5 shrink-0">{overlayControls}</div>
@@ -313,11 +387,19 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
   const [localElapsedMs, setLocalElapsedMs] = useState(0);
   const [opponentLiveMs, setOpponentLiveMs] = useState<number>(0);
 
-  // Ephemeral chat/emoji reaction bubbles over competitor video panes
+  // Ephemeral chat/emoji reaction bubbles + Mobile collapsible Quick Chat / History drawer & PiP
   const [reactionByPlayer, setReactionByPlayer] = useState<Record<string, ReactionBubble | null>>({});
+  const [mobileDrawerTab, setMobileDrawerTab] = useState<'closed' | 'chat' | 'history'>('closed');
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [selfPipMinimized, setSelfPipMinimized] = useState(false);
+
+  const mobileDrawerTabRef = useRef<'closed' | 'chat' | 'history'>('closed');
   const seenChatIdsRef = useRef<Set<string>>(new Set());
   const reactionTimersRef = useRef<Record<string, number>>({});
   const chatFeedRef = useRef<HTMLDivElement | null>(null);
+  const mobileChatFeedRef = useRef<HTMLDivElement | null>(null);
+
+  mobileDrawerTabRef.current = mobileDrawerTab;
 
   const localPhaseRef = useRef<ArenaTimerPhase>('idle');
   const holdTimerRef = useRef<number | null>(null);
@@ -369,12 +451,15 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
     }
   }, [room]);
 
-  // Surface fresh preset chat / emoji messages as floating reaction bubbles on competitor panes
+  // Surface fresh preset chat / emoji messages as floating reaction bubbles + mobile unread count
   const roomChat = room?.chat;
   useEffect(() => {
     if (!room) {
       seenChatIdsRef.current.clear();
       setReactionByPlayer({});
+      setMobileDrawerTab('closed');
+      setUnreadChatCount(0);
+      setSelfPipMinimized(false);
       for (const timerId of Object.values(reactionTimersRef.current)) {
         window.clearTimeout(timerId);
       }
@@ -387,9 +472,13 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
     const freshMessages = roomChat.filter((m) => !seenChatIdsRef.current.has(m.id));
     if (freshMessages.length === 0) return;
 
+    let incomingOpponentCount = 0;
     for (const msg of freshMessages) {
       seenChatIdsRef.current.add(msg.id);
       const pid = msg.playerId;
+      if (pid !== playerId) {
+        incomingOpponentCount += 1;
+      }
       setReactionByPlayer((prev) => ({
         ...prev,
         [pid]: { id: msg.id, text: msg.text, kind: msg.kind },
@@ -404,10 +493,17 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
       }, 3200);
     }
 
+    if (incomingOpponentCount > 0 && mobileDrawerTabRef.current !== 'chat') {
+      setUnreadChatCount((prev) => prev + incomingOpponentCount);
+    }
+
     if (chatFeedRef.current) {
       chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight;
     }
-  }, [room, roomChat]);
+    if (mobileChatFeedRef.current) {
+      mobileChatFeedRef.current.scrollTop = mobileChatFeedRef.current.scrollHeight;
+    }
+  }, [room, roomChat, playerId]);
 
   useEffect(() => {
     return () => {
@@ -682,19 +778,29 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
       className="fixed inset-0 z-50 flex flex-col overflow-hidden"
       style={{ backgroundColor: theme.ui.bg, color: theme.ui.text }}
     >
-      {/* Top Bar — Clean 3-Zone Tournament Header */}
+      {/* Top Bar — Clean 3-Zone Tournament Header (compact on mobile <= 52px) */}
       <header
-        className="shrink-0 w-full border-b px-4 sm:px-6 py-3 flex items-center justify-between gap-4 kubi-safe-top"
+        className="shrink-0 w-full border-b px-3 sm:px-6 py-2 sm:py-3 flex items-center justify-between gap-2 sm:gap-4 kubi-safe-top"
         style={{
           backgroundColor: theme.ui.surface,
           borderColor: theme.ui.border,
         }}
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <Swords className="w-5 h-5 shrink-0" style={{ color: theme.ui.accent }} />
-          <h2 className="font-display text-base sm:text-lg font-bold tracking-tight whitespace-nowrap shrink-0">
-            1v1 Live Arena
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <Swords className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" style={{ color: theme.ui.accent }} />
+          <h2 className="font-display text-sm sm:text-lg font-bold tracking-tight whitespace-nowrap shrink-0">
+            1v1 Arena
           </h2>
+          {room && mySeat && (
+            <span
+              data-testid="arena-mobile-header-score"
+              className="inline-flex md:hidden items-center gap-1 font-display text-xs font-bold tabular-nums whitespace-nowrap"
+            >
+              <span style={{ color: theme.ui.accent }}>{mySeat.wins}</span>
+              <span style={{ color: theme.ui.muted }}>—</span>
+              <span>{opponentSeat?.wins ?? 0}</span>
+            </span>
+          )}
           <span
             className="hidden sm:inline text-xs font-medium whitespace-nowrap"
             style={{
@@ -713,7 +819,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
           </span>
         </div>
 
-        {/* Center Live Match Score (visible only when inside a room) */}
+        {/* Center Live Match Score (visible only when inside a room on md+) */}
         {room && mySeat && (
           <div
             data-testid="arena-scoreboard"
@@ -729,7 +835,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
           </div>
         )}
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {room && (
             <button
               type="button"
@@ -738,7 +844,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                 cubeAudio.playUiTick();
                 arena.leaveRoom();
               }}
-              className="h-9 px-3 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              className="h-9 px-2.5 sm:px-3 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
               style={{
                 backgroundColor: theme.ui.surfaceSubtle,
                 borderColor: theme.ui.border,
@@ -746,7 +852,8 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
               }}
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Leave Room</span>
+              <span className="hidden sm:inline">Leave Room</span>
+              <span className="sm:hidden">Leave</span>
             </button>
           )}
           <button
@@ -756,7 +863,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
               cubeAudio.playUiTick();
               onClose();
             }}
-            className="h-9 px-3 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+            className="h-9 px-2.5 sm:px-3 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
             style={{
               backgroundColor: theme.ui.surfaceSubtle,
               borderColor: theme.ui.border,
@@ -793,7 +900,11 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto kubi-scroll">
+      <div
+        className={`flex-1 min-h-0 flex flex-col ${
+          room ? 'overflow-hidden md:overflow-y-auto kubi-scroll' : 'overflow-y-auto kubi-scroll'
+        }`}
+      >
         {!room ? (
           /* ===================== LOBBY VIEW ===================== */
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
@@ -1128,7 +1239,735 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
           </div>
         ) : (
           /* ===================== LIVE 1v1 COMPETITION STAGE ===================== */
-          <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 flex flex-col gap-4">
+          <>
+            {/* ---------- MOBILE PORTRAIT 1v1 STAGE (< md): Hero Opponent Video + Floating Self PiP + Thumb Timer + Collapsible Chat/History Sheet ---------- */}
+            <div
+              data-testid="arena-mobile-stage"
+              className="flex md:hidden flex-1 min-h-0 flex-col gap-2 px-3 py-2 overflow-hidden kubi-safe-bottom"
+            >
+              {/* 1. Compact Shared Scramble Bar */}
+              <section
+                data-testid="arena-mobile-scramble-bar"
+                className="shrink-0 rounded-xl border px-3 py-2 flex flex-col gap-1.5"
+                style={{
+                  backgroundColor: theme.ui.surface,
+                  borderColor: theme.ui.border,
+                }}
+              >
+                <div className="flex items-center justify-between gap-2 text-[11px]">
+                  <div className="flex items-center gap-1.5 min-w-0 truncate">
+                    <span className="font-semibold shrink-0" style={{ color: theme.ui.accent }}>
+                      R{room.roundNumber}
+                    </span>
+                    <span style={{ color: theme.ui.muted }}>·</span>
+                    <span className="font-medium shrink-0">
+                      {PUZZLE_META[room.puzzleType].shortLabel}
+                    </span>
+                    <span style={{ color: theme.ui.muted }}>·</span>
+                    <span className="font-mono-tabular font-semibold truncate">
+                      {room.roomCode}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {room.mode === 'private' && (
+                      <button
+                        type="button"
+                        data-testid="mobile-copy-link-btn"
+                        onClick={() => triggerCopy('link', buildInviteUrl(room.roomCode))}
+                        className="h-7 px-2 rounded-md border text-[11px] font-medium inline-flex items-center gap-1 whitespace-nowrap cursor-pointer"
+                        style={{
+                          backgroundColor: theme.ui.surfaceSubtle,
+                          borderColor: theme.ui.border,
+                          color: theme.ui.text,
+                        }}
+                      >
+                        {copiedFlag === 'link' ? (
+                          <Check className="w-3 h-3 text-emerald-600" />
+                        ) : (
+                          <Link2 className="w-3 h-3" />
+                        )}
+                        <span>{copiedFlag === 'link' ? 'Copied' : 'Invite'}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="mobile-next-round-btn"
+                      disabled={anyRunning}
+                      onClick={() => {
+                        cubeAudio.playUiTick();
+                        arena.requestNextRound();
+                      }}
+                      className="h-7 px-2.5 rounded-md text-[11px] font-semibold inline-flex items-center gap-1 whitespace-nowrap cursor-pointer disabled:opacity-45"
+                      style={{
+                        backgroundColor: bothFinished ? theme.ui.accent : theme.ui.surfaceSubtle,
+                        color: bothFinished ? theme.ui.accentFg : theme.ui.text,
+                        border: bothFinished ? 'none' : `1px solid ${theme.ui.border}`,
+                      }}
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>{bothFinished ? 'Next' : 'New'}</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <p
+                    data-testid="arena-mobile-scramble"
+                    className="font-mono-tabular text-xs font-semibold leading-snug line-clamp-2 break-words"
+                  >
+                    {room.currentScramble}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => triggerCopy('scramble', room.currentScramble)}
+                    aria-label="Copy scramble"
+                    className="h-7 w-7 rounded-md border shrink-0 inline-flex items-center justify-center cursor-pointer"
+                    style={{
+                      backgroundColor: theme.ui.surfaceSubtle,
+                      borderColor: theme.ui.border,
+                      color: theme.ui.muted,
+                    }}
+                  >
+                    {copiedFlag === 'scramble' ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+              </section>
+
+              {/* 2. Hero Opponent Video Stage + Floating Self-View Thumbnail (PiP) */}
+              <div className="relative flex-1 min-h-[200px] w-full">
+                {opponentSeat ? (
+                  <VideoFeedBox
+                    stream={arena.remoteStream}
+                    fallbackFrame={arena.remoteFallbackFrame}
+                    camOn={opponentSeat.camEnabled}
+                    micOn={opponentSeat.micEnabled}
+                    isLocal={false}
+                    muted={arena.remoteAudioMuted}
+                    mirrored={false}
+                    name={opponentSeat.name}
+                    subtitle={
+                      arena.webrtcStatus === 'connected'
+                        ? opponentSeat.camEnabled
+                          ? 'Live Video & Audio'
+                          : opponentSeat.micEnabled
+                            ? 'Live Audio'
+                            : 'Avatar Mode'
+                        : opponentSeat.camEnabled && arena.remoteFallbackFrame
+                          ? 'Live Video Stream'
+                          : 'Timers Synced'
+                    }
+                    theme={theme}
+                    reactionBubble={reactionByPlayer[opponentSeat.playerId] ?? null}
+                    reactionClassName="top-14 left-2.5"
+                    containerClassName="w-full h-full rounded-2xl"
+                    testId="arena-mobile-opponent-video"
+                    topLeftBadge={
+                      <div
+                        data-testid="arena-mobile-opponent-timer"
+                        className="rounded-xl border px-2.5 py-1.5 backdrop-blur-sm"
+                        style={{
+                          backgroundColor: 'rgba(18, 19, 24, 0.82)',
+                          borderColor:
+                            opponentSeat.timerPhase === 'armed'
+                              ? '#16A34A'
+                              : 'rgba(255, 255, 255, 0.2)',
+                        }}
+                      >
+                        <div
+                          className="font-mono-tabular text-base font-bold leading-none"
+                          style={{
+                            color:
+                              opponentSeat.timerPhase === 'armed'
+                                ? '#4ADE80'
+                                : opponentSeat.currentPenalty === 'dnf'
+                                  ? '#F87171'
+                                  : '#FFFFFF',
+                          }}
+                        >
+                          {opponentDisplayTime}
+                        </div>
+                        <div className="text-[10px] text-white/75 mt-0.5 leading-none">
+                          {opponentPhaseLabel}
+                        </div>
+                      </div>
+                    }
+                    overlayControls={
+                      <button
+                        type="button"
+                        data-testid="mobile-mute-opponent-btn"
+                        onClick={() => arena.toggleRemoteAudioMuted()}
+                        aria-label={
+                          arena.remoteAudioMuted
+                            ? 'Unmute opponent audio'
+                            : 'Mute opponent audio'
+                        }
+                        aria-pressed={arena.remoteAudioMuted}
+                        className="w-11 h-11 rounded-xl flex items-center justify-center cursor-pointer"
+                        style={{
+                          backgroundColor: arena.remoteAudioMuted
+                            ? 'rgba(220,38,38,0.88)'
+                            : 'rgba(255,255,255,0.2)',
+                          color: '#FFFFFF',
+                        }}
+                      >
+                        {arena.remoteAudioMuted ? (
+                          <VolumeX className="w-4 h-4" />
+                        ) : (
+                          <Volume2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    }
+                  />
+                ) : (
+                  <div
+                    data-testid="arena-mobile-waiting-card"
+                    className="w-full h-full rounded-2xl border px-4 py-4 flex flex-col items-center justify-center text-center gap-2.5"
+                    style={{
+                      backgroundColor: theme.ui.surface,
+                      borderColor: theme.ui.border,
+                    }}
+                  >
+                    <Users className="w-6 h-6" style={{ color: theme.ui.accent }} />
+                    <div>
+                      <h4 className="font-display text-base font-bold">
+                        Waiting for Opponent (1/2)
+                      </h4>
+                      <p className="text-xs mt-0.5 max-w-[240px]" style={{ color: theme.ui.muted }}>
+                        Share this room code or invite link so your opponent&apos;s live camera appears here.
+                      </p>
+                    </div>
+                    <div
+                      className="px-4 py-2 rounded-xl border font-mono-tabular text-xl font-bold tracking-[0.2em]"
+                      style={{
+                        backgroundColor: theme.ui.surfaceSubtle,
+                        borderColor: theme.ui.border,
+                      }}
+                    >
+                      {room.roomCode}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => triggerCopy('code', room.roomCode)}
+                        className="h-9 px-3 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                        style={{
+                          backgroundColor: theme.ui.surfaceSubtle,
+                          borderColor: theme.ui.border,
+                          color: theme.ui.text,
+                        }}
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>{copiedFlag === 'code' ? 'Copied' : 'Code'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => triggerCopy('link', buildInviteUrl(room.roomCode))}
+                        className="h-9 px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                        style={{
+                          backgroundColor: theme.ui.accent,
+                          color: theme.ui.accentFg,
+                        }}
+                      >
+                        <Link2 className="w-3.5 h-3.5" />
+                        <span>{copiedFlag === 'link' ? 'Copied' : 'Invite Link'}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Floating Self-View Thumbnail (PiP) */}
+                {selfPipMinimized ? (
+                  <button
+                    type="button"
+                    data-testid="arena-mobile-self-pip-restore"
+                    onClick={() => setSelfPipMinimized(false)}
+                    aria-label="Show self-view camera thumbnail"
+                    className="absolute top-2.5 right-2.5 z-30 h-9 px-2.5 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 shadow-md cursor-pointer"
+                    style={{
+                      backgroundColor: 'rgba(18, 19, 24, 0.85)',
+                      borderColor: 'rgba(255, 255, 255, 0.24)',
+                      color: '#FFFFFF',
+                    }}
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>Self</span>
+                  </button>
+                ) : (
+                  <div
+                    data-testid="arena-mobile-self-pip"
+                    className="absolute top-2.5 right-2.5 z-30 w-[92px] h-[124px] rounded-xl shadow-xl overflow-hidden"
+                  >
+                    <VideoFeedBox
+                      stream={arena.localStream}
+                      camOn={arena.camEnabled}
+                      micOn={arena.micEnabled}
+                      isLocal={true}
+                      muted={true}
+                      mirrored={true}
+                      name="You"
+                      subtitle=""
+                      theme={theme}
+                      reactionBubble={mySeat ? reactionByPlayer[mySeat.playerId] ?? null : null}
+                      reactionClassName="top-1.5 left-1.5"
+                      containerClassName="w-full h-full rounded-xl"
+                      compact={true}
+                      testId="arena-mobile-local-video"
+                    />
+                    <button
+                      type="button"
+                      data-testid="arena-mobile-self-pip-minimize"
+                      onClick={() => setSelfPipMinimized(true)}
+                      aria-label="Minimize self-view thumbnail"
+                      className="absolute top-1.5 right-1.5 z-30 w-6 h-6 rounded-md flex items-center justify-center cursor-pointer"
+                      style={{
+                        backgroundColor: 'rgba(18, 19, 24, 0.72)',
+                        color: '#FFFFFF',
+                      }}
+                    >
+                      <Minimize2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Thumb-Zone Local Touch Timer Pad + Cam/Mic Controls */}
+              <div className="shrink-0 flex items-stretch gap-2">
+                <button
+                  type="button"
+                  data-testid="arena-mobile-timer-pad"
+                  onPointerDown={(e) => {
+                    if (e.button !== 0 && e.pointerType === 'mouse') return;
+                    e.currentTarget.blur();
+                    handleTimerPressStart();
+                  }}
+                  onPointerUp={() => handleTimerPressEnd()}
+                  onPointerCancel={() => handleTimerPressEnd()}
+                  className="flex-1 min-h-[88px] rounded-xl border px-3 py-2 flex flex-col items-center justify-center gap-1 select-none transition-colors cursor-pointer"
+                  style={{
+                    backgroundColor:
+                      localPhase === 'armed'
+                        ? 'rgba(22, 163, 74, 0.1)'
+                        : localPhase === 'holding'
+                          ? 'rgba(217, 119, 6, 0.1)'
+                          : theme.ui.surface,
+                    borderColor:
+                      localPhase === 'armed'
+                        ? '#16A34A'
+                        : localPhase === 'holding'
+                          ? '#D97706'
+                          : theme.ui.border,
+                    touchAction: 'manipulation',
+                  }}
+                >
+                  <span
+                    data-testid="arena-mobile-timer-value"
+                    className="font-mono-tabular font-bold tracking-tight leading-none"
+                    style={{
+                      fontSize: 'clamp(1.85rem, 8.5vw, 2.6rem)',
+                      color: localTimerColor,
+                    }}
+                  >
+                    {localDisplayTime}
+                  </span>
+                  <span className="text-[11px] font-medium" style={{ color: theme.ui.muted }}>
+                    {localPhase === 'holding'
+                      ? 'Keep holding...'
+                      : localPhase === 'armed'
+                        ? 'Release to start'
+                        : localPhase === 'running'
+                          ? 'Tap pad to stop'
+                          : mySeat?.timerPhase === 'finished'
+                            ? 'Round finished'
+                            : 'Hold pad to start'}
+                  </span>
+                </button>
+
+                {/* Dedicated 44x44px Thumb-Reach Camera & Mic Toggles */}
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    data-testid="mobile-toggle-cam-btn"
+                    onClick={() => arena.toggleCamera()}
+                    aria-label={arena.camEnabled ? 'Turn camera off' : 'Turn camera on'}
+                    aria-pressed={arena.camEnabled}
+                    className="w-11 h-11 rounded-xl border flex items-center justify-center cursor-pointer"
+                    style={{
+                      backgroundColor: arena.camEnabled
+                        ? theme.ui.surface
+                        : 'rgba(220,38,38,0.14)',
+                      borderColor: arena.camEnabled ? theme.ui.border : 'rgba(220,38,38,0.45)',
+                      color: arena.camEnabled ? theme.ui.text : '#DC2626',
+                    }}
+                  >
+                    {arena.camEnabled ? (
+                      <Video className="w-4 h-4" />
+                    ) : (
+                      <VideoOff className="w-4 h-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="mobile-toggle-mic-btn"
+                    onClick={() => arena.toggleMic()}
+                    aria-label={arena.micEnabled ? 'Mute microphone' : 'Unmute microphone'}
+                    aria-pressed={arena.micEnabled}
+                    className="w-11 h-11 rounded-xl border flex items-center justify-center cursor-pointer"
+                    style={{
+                      backgroundColor: arena.micEnabled
+                        ? theme.ui.surface
+                        : 'rgba(220,38,38,0.14)',
+                      borderColor: arena.micEnabled ? theme.ui.border : 'rgba(220,38,38,0.45)',
+                      color: arena.micEnabled ? theme.ui.text : '#DC2626',
+                    }}
+                  >
+                    {arena.micEnabled ? (
+                      <Mic className="w-4 h-4" />
+                    ) : (
+                      <MicOff className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Inline Penalty Strip when local round finishes */}
+              {mySeat?.timerPhase === 'finished' && (
+                <div className="shrink-0 flex items-center justify-between gap-2 px-1">
+                  <span className="text-[11px]" style={{ color: theme.ui.muted }}>
+                    Penalty
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {(['none', '+2', 'dnf'] as SolvePenalty[]).map((pen) => {
+                      const active = mySeat.currentPenalty === pen;
+                      return (
+                        <button
+                          key={pen}
+                          type="button"
+                          data-testid={`mobile-penalty-${pen}`}
+                          onClick={() => {
+                            cubeAudio.playUiTick();
+                            arena.sendTimerPenalty(pen, room.roundNumber);
+                          }}
+                          aria-pressed={active}
+                          className="h-8 px-3 rounded-lg border text-xs font-semibold cursor-pointer"
+                          style={{
+                            backgroundColor: active ? theme.ui.accent : theme.ui.surface,
+                            borderColor: active ? theme.ui.accent : theme.ui.border,
+                            color: active ? theme.ui.accentFg : theme.ui.text,
+                          }}
+                        >
+                          {pen === 'none' ? 'OK' : pen.toUpperCase()}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. Compact Bottom Drawer Trigger Bar (Quick Chat + Round History) */}
+              <div
+                data-testid="arena-mobile-drawer-bar"
+                className="shrink-0 grid grid-cols-2 gap-2"
+              >
+                <button
+                  type="button"
+                  data-testid="mobile-open-chat-btn"
+                  onClick={() => {
+                    cubeAudio.playUiTick();
+                    setUnreadChatCount(0);
+                    setMobileDrawerTab('chat');
+                  }}
+                  className="h-11 px-3 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
+                  style={{
+                    backgroundColor: theme.ui.surface,
+                    borderColor: unreadChatCount > 0 ? theme.ui.accent : theme.ui.border,
+                    color: theme.ui.text,
+                  }}
+                >
+                  <MessageSquare className="w-4 h-4 shrink-0" style={{ color: theme.ui.accent }} />
+                  <span>Quick Chat</span>
+                  {unreadChatCount > 0 && (
+                    <span
+                      data-testid="mobile-unread-badge"
+                      className="font-mono-tabular text-[11px] font-bold"
+                      style={{ color: theme.ui.accent }}
+                    >
+                      ({unreadChatCount})
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  data-testid="mobile-open-history-btn"
+                  onClick={() => {
+                    cubeAudio.playUiTick();
+                    setMobileDrawerTab('history');
+                  }}
+                  className="h-11 px-3 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
+                  style={{
+                    backgroundColor: theme.ui.surface,
+                    borderColor: theme.ui.border,
+                    color: theme.ui.text,
+                  }}
+                >
+                  <History className="w-4 h-4 shrink-0" style={{ color: theme.ui.muted }} />
+                  <span>History ({room.history.length})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Collapsible Slide-Up Quick Chat & History Bottom Drawer (Mobile Only) */}
+            {mobileDrawerTab !== 'closed' && (
+              <div
+                className="fixed inset-0 z-50 md:hidden flex flex-col justify-end"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Arena Quick Chat and Round History"
+              >
+                <button
+                  type="button"
+                  aria-label="Close drawer backdrop"
+                  onClick={() => setMobileDrawerTab('closed')}
+                  className="absolute inset-0 bg-black/50 backdrop-blur-[2px] cursor-pointer"
+                />
+                <div
+                  data-testid="arena-mobile-drawer"
+                  className="relative z-10 w-full max-h-[76dvh] rounded-t-3xl border-t flex flex-col overflow-hidden shadow-2xl kubi-safe-bottom"
+                  style={{
+                    backgroundColor: theme.ui.surface,
+                    borderColor: theme.ui.border,
+                  }}
+                >
+                  {/* Grab Handle */}
+                  <div className="pt-2.5 pb-1 flex justify-center">
+                    <div
+                      className="w-10 h-1 rounded-full"
+                      style={{ backgroundColor: theme.ui.border }}
+                    />
+                  </div>
+
+                  {/* Drawer Tabs & Close */}
+                  <div
+                    className="px-4 pb-2.5 border-b flex items-center justify-between gap-2"
+                    style={{ borderColor: theme.ui.border }}
+                  >
+                    <div
+                      className="flex items-center gap-1 p-1 rounded-xl border"
+                      style={{
+                        backgroundColor: theme.ui.surfaceSubtle,
+                        borderColor: theme.ui.border,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUnreadChatCount(0);
+                          setMobileDrawerTab('chat');
+                        }}
+                        className="h-8 px-3 rounded-lg text-xs font-semibold cursor-pointer"
+                        style={{
+                          backgroundColor:
+                            mobileDrawerTab === 'chat' ? theme.ui.surface : 'transparent',
+                          color: mobileDrawerTab === 'chat' ? theme.ui.text : theme.ui.muted,
+                        }}
+                      >
+                        Quick Chat
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMobileDrawerTab('history')}
+                        className="h-8 px-3 rounded-lg text-xs font-semibold cursor-pointer"
+                        style={{
+                          backgroundColor:
+                            mobileDrawerTab === 'history' ? theme.ui.surface : 'transparent',
+                          color: mobileDrawerTab === 'history' ? theme.ui.text : theme.ui.muted,
+                        }}
+                      >
+                        History ({room.history.length})
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="mobile-close-drawer-btn"
+                      onClick={() => setMobileDrawerTab('closed')}
+                      aria-label="Close drawer"
+                      className="w-11 h-11 rounded-xl border flex items-center justify-center cursor-pointer"
+                      style={{
+                        backgroundColor: theme.ui.surfaceSubtle,
+                        borderColor: theme.ui.border,
+                        color: theme.ui.text,
+                      }}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Drawer Body */}
+                  <div className="flex-1 min-h-0 overflow-y-auto kubi-scroll p-4">
+                    {mobileDrawerTab === 'chat' ? (
+                      <div className="flex flex-col gap-3">
+                        <div
+                          ref={mobileChatFeedRef}
+                          data-testid="mobile-chat-feed"
+                          className="max-h-[150px] overflow-y-auto kubi-scroll rounded-xl border px-3 py-2 flex flex-col gap-1.5 text-xs"
+                          style={{
+                            backgroundColor: theme.ui.surfaceSubtle,
+                            borderColor: theme.ui.border,
+                          }}
+                        >
+                          {room.chat.length === 0 ? (
+                            <p className="py-1" style={{ color: theme.ui.muted }}>
+                              No messages yet — tap an emoji or quick phrase below.
+                            </p>
+                          ) : (
+                            room.chat.map((msg) => {
+                              const isMe = msg.playerId === mySeat?.playerId;
+                              return (
+                                <div key={msg.id} className="flex items-baseline gap-2 leading-snug">
+                                  <span
+                                    className="font-semibold shrink-0"
+                                    style={{ color: isMe ? theme.ui.accent : theme.ui.text }}
+                                  >
+                                    {isMe ? `${msg.senderName} (You)` : msg.senderName}:
+                                  </span>
+                                  <span
+                                    className={msg.kind === 'emoji' ? 'text-base leading-none' : ''}
+                                  >
+                                    {msg.text}
+                                  </span>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        <div
+                          className="flex flex-wrap items-center gap-1.5"
+                          role="group"
+                          aria-label="Mobile emoji reactions"
+                        >
+                          {CHAT_EMOJI_PRESETS.map((preset) => (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              data-testid={`mobile-chat-btn-${preset.id}`}
+                              aria-label={`Send ${preset.label} reaction`}
+                              onClick={() => {
+                                cubeAudio.playUiTick();
+                                arena.sendChatPreset(preset.id);
+                              }}
+                              className="h-11 w-11 rounded-xl border text-lg inline-flex items-center justify-center active:scale-95 cursor-pointer"
+                              style={{
+                                backgroundColor: theme.ui.surfaceSubtle,
+                                borderColor: theme.ui.border,
+                              }}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div
+                          className="flex flex-wrap items-center gap-1.5"
+                          role="group"
+                          aria-label="Mobile quick chat phrases"
+                        >
+                          {CHAT_TEXT_PRESETS.map((preset) => (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              data-testid={`mobile-chat-btn-${preset.id}`}
+                              onClick={() => {
+                                cubeAudio.playUiTick();
+                                arena.sendChatPreset(preset.id);
+                              }}
+                              className="h-10 px-3 rounded-xl border text-xs font-medium whitespace-nowrap active:scale-[0.98] cursor-pointer"
+                              style={{
+                                backgroundColor: theme.ui.surfaceSubtle,
+                                borderColor: theme.ui.border,
+                                color: theme.ui.text,
+                              }}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : room.history.length === 0 ? (
+                      <div
+                        className="py-8 text-center text-xs"
+                        style={{ color: theme.ui.muted }}
+                      >
+                        Complete Round 1 on both timers to log head-to-head split times.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr
+                              className="border-b"
+                              style={{ borderColor: theme.ui.border, color: theme.ui.muted }}
+                            >
+                              <th className="py-2 pr-2 font-medium">#</th>
+                              <th className="py-2 px-2 font-medium text-right">You</th>
+                              <th className="py-2 px-2 font-medium text-right">Opp</th>
+                              <th className="py-2 pl-2 font-medium text-right">Winner</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...room.history].reverse().map((rec) => {
+                              const myRes = mySeat ? rec.results[mySeat.playerId] : undefined;
+                              const oppRes = opponentSeat
+                                ? rec.results[opponentSeat.playerId]
+                                : undefined;
+                              const winnerName =
+                                rec.winnerPlayerId === 'tie'
+                                  ? 'Tie'
+                                  : rec.winnerPlayerId === mySeat?.playerId
+                                    ? 'You'
+                                    : opponentSeat?.name ?? 'Opp';
+                              return (
+                                <tr
+                                  key={rec.roundNumber}
+                                  className="border-b last:border-b-0"
+                                  style={{ borderColor: theme.ui.border }}
+                                >
+                                  <td className="py-2.5 pr-2 font-mono-tabular font-semibold">
+                                    #{rec.roundNumber}
+                                  </td>
+                                  <td className="py-2.5 px-2 font-mono-tabular text-right font-semibold">
+                                    {myRes ? formatRecordTime(myRes) : '—'}
+                                  </td>
+                                  <td className="py-2.5 px-2 font-mono-tabular text-right font-semibold">
+                                    {oppRes ? formatRecordTime(oppRes) : '—'}
+                                  </td>
+                                  <td
+                                    className="py-2.5 pl-2 text-right font-semibold truncate max-w-[90px]"
+                                    style={{
+                                      color:
+                                        rec.winnerPlayerId === mySeat?.playerId
+                                          ? '#16A34A'
+                                          : theme.ui.text,
+                                    }}
+                                  >
+                                    {winnerName}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------- DESKTOP / TABLET 1v1 STAGE (>= md): 50/50 Split + Inline Quick Chat + Round History ---------- */}
+            <div className="hidden md:flex max-w-7xl w-full mx-auto px-6 py-4 flex-col gap-4">
             {/* Shared Common Scramble & Round Controls Bar */}
             <section
               data-testid="arena-scramble-bar"
@@ -1845,6 +2684,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
               )}
             </section>
           </div>
+          </>
         )}
       </div>
     </div>
