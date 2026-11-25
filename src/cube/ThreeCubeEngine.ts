@@ -12,6 +12,13 @@ import {
   parseNotation,
 } from './cubeLogic';
 import { computeSnapshotDimensions } from './snapshot';
+import {
+  computeLayerLocalCenter,
+  computeTurnAcousticProfile,
+  type SpatialAcousticProfile,
+  type SpatialListenerPose,
+  type Vec3,
+} from './spatialAudio';
 import { THEMES } from './themes';
 import type {
   Axis,
@@ -38,7 +45,10 @@ interface ActiveTurn {
   axisVec: THREE.Vector3;
   cubieGroups: THREE.Group[];
   pivot: THREE.Group;
-  clickPlayed: boolean;
+  slidePlayed: boolean;
+  firstClickPlayed: boolean;
+  secondClickPlayed: boolean;
+  turnSpeed: number;
 }
 
 interface ParticleSlot {
@@ -77,6 +87,11 @@ const _s1 = new THREE.Vector3();
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _axisY = new THREE.Vector3(0, 1, 0);
 const _axisZ = new THREE.Vector3(0, 0, 1);
+const _camForward = new THREE.Vector3();
+const _camUp = new THREE.Vector3();
+const _layerLocalPos = new THREE.Vector3();
+const _layerWorldPos = new THREE.Vector3();
+const _cubeWorldPos = new THREE.Vector3();
 
 function detectSoftwareGl(): boolean {
   try {
@@ -723,7 +738,7 @@ export class ThreeCubeEngine {
     if (animateMorph) {
       this.morphProgress = 1.0;
       this.emitBurst(new THREE.Vector3(0, 0, 0), 22, 2.8);
-      cubeAudio.playMorphWhoosh();
+      cubeAudio.playMorphWhoosh(this.getCubeWorldCoords());
     } else {
       this.morphProgress = 0;
     }
@@ -900,7 +915,7 @@ export class ThreeCubeEngine {
       this.applyMoveInstantVisual(move);
     }
     this.morphProgress = 0.55;
-    cubeAudio.playMorphWhoosh();
+    cubeAudio.playMorphWhoosh(this.getCubeWorldCoords());
   }
 
   private applyMoveInstantVisual(move: CubeMove) {
@@ -998,7 +1013,7 @@ export class ThreeCubeEngine {
     this.victoryWaveTime = 1.8;
     this.ringPulse = 1.0;
     this.emitBurst(new THREE.Vector3(0, 0.2, 0), 54, 4.2);
-    cubeAudio.playVictoryChord();
+    cubeAudio.playVictoryChord(this.getCubeWorldCoords());
   }
 
   private emitBurst(origin: THREE.Vector3, count: number, speed: number, axis?: Axis) {
@@ -1058,6 +1073,7 @@ export class ThreeCubeEngine {
 
     const totalAngle = move.direction * move.turns * (Math.PI / 2);
     const duration = Math.max(0.08, (this.turnDurationBase * (move.turns === 2 ? 1.32 : 1.0)) / speedMultiplier);
+    const effectiveTurnSpeed = (0.25 / Math.max(this.turnDurationBase, 0.05)) * speedMultiplier;
 
     this.activeTurn = {
       move,
@@ -1068,8 +1084,60 @@ export class ThreeCubeEngine {
       axisVec,
       cubieGroups: affectedGroups,
       pivot,
-      clickPlayed: false,
+      slidePlayed: false,
+      firstClickPlayed: false,
+      secondClickPlayed: false,
+      turnSpeed: effectiveTurnSpeed,
     };
+  }
+
+  private getCubeWorldCoords(): Vec3 {
+    this.cubeRoot.updateWorldMatrix(true, false);
+    this.cubeRoot.getWorldPosition(_cubeWorldPos);
+    return [_cubeWorldPos.x, _cubeWorldPos.y, _cubeWorldPos.z];
+  }
+
+  private syncSpatialAudioListener(): SpatialListenerPose {
+    this.camera.getWorldDirection(_camForward);
+    _camUp.set(0, 1, 0).applyQuaternion(this.camera.quaternion).normalize();
+    const pose: SpatialListenerPose = {
+      position: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+      forward: [_camForward.x, _camForward.y, _camForward.z],
+      up: [_camUp.x, _camUp.y, _camUp.z],
+    };
+    cubeAudio.updateListenerPose(pose);
+    return pose;
+  }
+
+  private buildTurnAcousticProfile(
+    turn: ActiveTurn,
+    listener: SpatialListenerPose,
+    clickIndex: 0 | 1
+  ): SpatialAcousticProfile {
+    const unitScale = this.puzzleType === 'mirror' ? 0.92 : 2.75 / getPuzzleSize(this.puzzleType);
+    this.cubeRoot.updateWorldMatrix(true, false);
+    this.cubeRoot.getWorldPosition(_cubeWorldPos);
+
+    const localCenter = computeLayerLocalCenter(
+      turn.move,
+      this.puzzleType,
+      unitScale,
+      this.explodeCurrent
+    );
+    _layerLocalPos.set(localCenter[0], localCenter[1], localCenter[2]);
+    _layerWorldPos.copy(_layerLocalPos).applyMatrix4(this.cubeRoot.matrixWorld);
+
+    return computeTurnAcousticProfile({
+      move: turn.move,
+      puzzleType: this.puzzleType,
+      unitScale,
+      explodeAmount: this.explodeCurrent,
+      turnSpeed: turn.turnSpeed,
+      cubeWorldPos: [_cubeWorldPos.x, _cubeWorldPos.y, _cubeWorldPos.z],
+      layerWorldPos: [_layerWorldPos.x, _layerWorldPos.y, _layerWorldPos.z],
+      listener,
+      clickIndex,
+    });
   }
 
   private finishActiveTurn() {
@@ -1396,6 +1464,7 @@ export class ThreeCubeEngine {
       }
     }
     this.controls.update();
+    const listenerPose = this.syncSpatialAudioListener();
 
     // 4. Advance active slice turn or dequeue next
     if (!this.activeTurn && this.moveQueue.length > 0 && this.gameState !== 'paused') {
@@ -1403,19 +1472,33 @@ export class ThreeCubeEngine {
     }
 
     if (this.activeTurn && this.gameState !== 'paused') {
-      this.activeTurn.elapsed += dt;
-      const rawT = Math.min(this.activeTurn.elapsed / this.activeTurn.duration, 1);
+      const turn = this.activeTurn;
+      turn.elapsed += dt;
+      const rawT = Math.min(turn.elapsed / turn.duration, 1);
 
-      if (!this.activeTurn.clickPlayed && rawT > 0.25 && this.gameState === 'playing') {
-        this.activeTurn.clickPlayed = true;
-        cubeAudio.playTurnClick(this.activeTurn.move.layers.length > 1 || this.activeTurn.move.turns === 2);
+      if (this.gameState === 'playing') {
+        if (!turn.slidePlayed && rawT >= 0.08) {
+          turn.slidePlayed = true;
+          cubeAudio.playSpatialTurnSlide(this.buildTurnAcousticProfile(turn, listenerPose, 0));
+        }
+
+        if (turn.move.turns === 2) {
+          if (!turn.firstClickPlayed && rawT >= 0.34) {
+            turn.firstClickPlayed = true;
+            cubeAudio.playSpatialTurnClick(this.buildTurnAcousticProfile(turn, listenerPose, 0));
+          }
+          if (!turn.secondClickPlayed && rawT >= 0.78) {
+            turn.secondClickPlayed = true;
+            cubeAudio.playSpatialTurnClick(this.buildTurnAcousticProfile(turn, listenerPose, 1));
+          }
+        } else if (!turn.firstClickPlayed && rawT >= 0.66) {
+          turn.firstClickPlayed = true;
+          cubeAudio.playSpatialTurnClick(this.buildTurnAcousticProfile(turn, listenerPose, 0));
+        }
       }
 
       const eased = easeOutMagnetic(rawT);
-      this.activeTurn.pivot.setRotationFromAxisAngle(
-        this.activeTurn.axisVec,
-        this.activeTurn.totalAngle * eased
-      );
+      turn.pivot.setRotationFromAxisAngle(turn.axisVec, turn.totalAngle * eased);
 
       if (rawT >= 1) {
         this.finishActiveTurn();

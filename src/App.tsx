@@ -147,6 +147,9 @@ export default function App() {
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [spatialAudioEnabled, setSpatialAudioEnabled] = useState<boolean>(() =>
+    cubeAudio.isSpatialEnabled()
+  );
   const [explodeAmount, setExplodeAmount] = useState(0);
   const [turnSpeed, setTurnSpeed] = useState(1.1);
   const [activePatternId, setActivePatternId] = useState<StickerPatternId>('solved');
@@ -1431,6 +1434,15 @@ export default function App() {
     });
   }, []);
 
+  const handleToggleSpatialAudio = useCallback(() => {
+    setSpatialAudioEnabled((prev) => {
+      const next = !prev;
+      cubeAudio.setSpatialEnabled(next);
+      cubeAudio.playUiTick();
+      return next;
+    });
+  }, []);
+
   // Global Keyboard Shortcuts (WCA faces U/D/L/R/F/B, center slices M/E/S, cube rotations x/y/z,
   // Shift for prime ', Enter/Space title start, Esc/P pause, V mute, H HUD, Ctrl+Z/Backspace undo, T stopwatch)
   useEffect(() => {
@@ -1650,6 +1662,7 @@ export default function App() {
             customThemes={customThemes}
             soundscape={soundscape}
             ambientVolume={ambientVolume}
+            spatialAudioEnabled={spatialAudioEnabled}
             puzzleType={puzzleType}
             activeTab={activeTab}
             collapsed={dockCollapsed}
@@ -1724,6 +1737,7 @@ export default function App() {
             onExportSnapshot={handleExportSnapshot}
             onSelectSoundscape={handleSelectSoundscape}
             onAmbientVolumeChange={handleAmbientVolumeChange}
+            onToggleSpatialAudio={handleToggleSpatialAudio}
             onApplyPattern={handleApplyPattern}
             onRunAlgorithm={handleRunAlgorithm}
             onSelectLesson={handleSelectLesson}
@@ -1772,6 +1786,7 @@ export default function App() {
           solveCount={solveRecords.length}
           soundscape={soundscape}
           ambientVolume={ambientVolume}
+          spatialAudioEnabled={spatialAudioEnabled}
           onResume={() => setGameState('playing')}
           onRestart={handleResetCube}
           onSelectTheme={handleSelectTheme}
@@ -1782,6 +1797,7 @@ export default function App() {
           }}
           onSelectSoundscape={handleSelectSoundscape}
           onAmbientVolumeChange={handleAmbientVolumeChange}
+          onToggleSpatialAudio={handleToggleSpatialAudio}
           onExportBackupJson={handleExportBackupJson}
           onImportBackupJson={handleImportBackupJson}
           onExportSnapshot={handleExportSnapshot}

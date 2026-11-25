@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  AudioLines,
   Award,
   BookOpen,
   Camera,
@@ -35,12 +36,14 @@ interface PauseModalProps {
   solveCount: number;
   soundscape: AmbientSoundscapeId;
   ambientVolume: number;
+  spatialAudioEnabled: boolean;
   onResume: () => void;
   onRestart: () => void;
   onSelectTheme: (themeKey: string) => void;
   onOpenPaletteStudio: () => void;
   onSelectSoundscape: (s: AmbientSoundscapeId) => void;
   onAmbientVolumeChange: (v: number) => void;
+  onToggleSpatialAudio: () => void;
   onExportBackupJson: () => { ok: boolean; message: string };
   onImportBackupJson: (rawText: string, mode: BackupImportMode) => { ok: boolean; message: string };
   onExportSnapshot: () => void;
@@ -53,12 +56,14 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   solveCount,
   soundscape,
   ambientVolume,
+  spatialAudioEnabled,
   onResume,
   onRestart,
   onSelectTheme,
   onOpenPaletteStudio,
   onSelectSoundscape,
   onAmbientVolumeChange,
+  onToggleSpatialAudio,
   onExportBackupJson,
   onImportBackupJson,
   onExportSnapshot,
@@ -181,8 +186,32 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           </div>
         </div>
 
-        {/* Ambient Soundscapes Settings */}
+        {/* 3D Spatial Click Audio & Ambient Soundscapes */}
         <div className="mb-5 pt-3 border-t" style={{ borderColor: theme.ui.border }}>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <span className="text-xs font-medium inline-flex items-center gap-1.5" style={{ color: theme.ui.muted }}>
+              <AudioLines
+                className="w-3.5 h-3.5 shrink-0"
+                style={{ color: spatialAudioEnabled ? theme.ui.accent : theme.ui.muted }}
+              />
+              <span>{t('settings.spatialAudio')}</span>
+            </span>
+            <button
+              type="button"
+              data-testid="settings-spatial-audio-toggle"
+              aria-pressed={spatialAudioEnabled}
+              onClick={onToggleSpatialAudio}
+              className="h-7 px-2.5 rounded-lg border text-[11px] font-semibold cursor-pointer transition-colors shrink-0"
+              style={{
+                backgroundColor: spatialAudioEnabled ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
+                borderColor: spatialAudioEnabled ? theme.ui.accent : theme.ui.border,
+                color: spatialAudioEnabled ? theme.ui.accent : theme.ui.muted,
+              }}
+            >
+              {spatialAudioEnabled ? t('settings.spatialAudioOn') : t('settings.spatialAudioOff')}
+            </button>
+          </div>
+
           <div className="flex items-center justify-between gap-2 mb-2">
             <span className="text-xs font-medium inline-flex items-center gap-1.5" style={{ color: theme.ui.muted }}>
               <Headphones className="w-3.5 h-3.5" style={{ color: soundscape !== 'off' ? theme.ui.accent : theme.ui.muted }} />

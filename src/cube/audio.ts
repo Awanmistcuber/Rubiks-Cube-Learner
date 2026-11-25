@@ -1,5 +1,15 @@
 import { readCookie, writeCookie } from './dailyChallenge';
+import {
+  loadSpatialAudioPref,
+  saveSpatialAudioPref,
+  type SpatialAcousticProfile,
+  type SpatialListenerPose,
+  type Vec3,
+} from './spatialAudio';
 import type { AmbientSoundscapeId } from './types';
+
+export { loadSpatialAudioPref, saveSpatialAudioPref } from './spatialAudio';
+export type { SpatialAcousticProfile, SpatialListenerPose } from './spatialAudio';
 
 export interface AmbientSoundscapeMeta {
   id: AmbientSoundscapeId;
@@ -85,13 +95,27 @@ export function saveAmbientPrefs(soundscape: AmbientSoundscapeId, volume: number
 }
 
 /**
- * Procedural Web Audio synthesizer for tactile magnetic speedcube acoustics
- * and soothing ambient focus soundscapes (Rainy Studio, Lo-fi Beats, White Noise).
+ * Procedural 3D Spatial Web Audio synthesizer for physically accurate magnetic speedcube
+ * mechanical acoustics (HRTF PannerNode + AudioListener camera tracking + studio room
+ * early reflections) and soothing ambient focus soundscapes.
  * Zero external audio assets — all audio is synthesized cleanly in real time.
  */
 class CubeAudioSynth {
   private ctx: AudioContext | null = null;
   private muted = false;
+  private spatialEnabled = loadSpatialAudioPref();
+
+  // 3D Spatial Listener & Studio Room Acoustic Bus
+  private listenerPose: SpatialListenerPose = {
+    position: [5.2, 4.0, 5.8],
+    forward: [-0.6, -0.45, -0.66],
+    up: [0, 1, 0],
+  };
+  private spatialDryBus: GainNode | null = null;
+  private spatialRoomSend: GainNode | null = null;
+  private clickNoiseBuffer: AudioBuffer | null = null;
+  private slideNoiseBuffer: AudioBuffer | null = null;
+  private lastSpatialTrigger: SpatialAcousticProfile | null = null;
 
   // Ambient soundscape graph
   private soundscape: AmbientSoundscapeId = 'off';
@@ -108,11 +132,161 @@ class CubeAudioSynth {
         (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return null;
       this.ctx = new AudioCtx();
+      this.initSpatialGraph(this.ctx);
+      this.applyListenerPoseToContext(this.ctx, this.listenerPose);
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
     return this.ctx;
+  }
+
+  private initSpatialGraph(ctx: AudioContext) {
+    // Dry spatial master bus
+    const dryBus = ctx.createGain();
+    dryBus.gain.value = 1.0;
+    dryBus.connect(ctx.destination);
+    this.spatialDryBus = dryBus;
+
+    // Subtle procedural studio room early-reflection stereo convolver (~115ms intimate room)
+    try {
+      const irLen = Math.floor(ctx.sampleRate * 0.115);
+      const irBuf = ctx.createBuffer(2, irLen, ctx.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const data = irBuf.getChannelData(ch);
+        // Discrete early desk/wall reflection taps + warm exponential tail
+        const taps = ch === 0 ? [0.009, 0.017, 0.029, 0.044] : [0.012, 0.021, 0.034, 0.051];
+        for (const tSec of taps) {
+          const idx = Math.floor(tSec * ctx.sampleRate);
+          if (idx < irLen) {
+            data[idx] += 0.32 * Math.exp(-tSec * 22);
+          }
+        }
+        let lpState = 0;
+        for (let i = 0; i < irLen; i++) {
+          const t = i / irLen;
+          const white = Math.random() * 2 - 1;
+          lpState = lpState * 0.72 + white * 0.28;
+          data[i] += lpState * 0.16 * Math.pow(1 - t, 2.8);
+        }
+      }
+
+      const convolver = ctx.createConvolver();
+      convolver.buffer = irBuf;
+
+      const roomSend = ctx.createGain();
+      roomSend.gain.value = 0.16;
+
+      const roomFilter = ctx.createBiquadFilter();
+      roomFilter.type = 'lowpass';
+      roomFilter.frequency.value = 3400;
+
+      roomSend.connect(convolver);
+      convolver.connect(roomFilter);
+      roomFilter.connect(ctx.destination);
+      this.spatialRoomSend = roomSend;
+    } catch {
+      this.spatialRoomSend = null;
+    }
+
+    // Pre-generate crisp transient noise buffer (reused across all clicks — zero GC)
+    const snapLen = Math.floor(ctx.sampleRate * 0.034);
+    const snapBuf = ctx.createBuffer(1, snapLen, ctx.sampleRate);
+    const snapData = snapBuf.getChannelData(0);
+    for (let i = 0; i < snapLen; i++) {
+      const env = Math.exp(-i / (snapLen * 0.22));
+      snapData[i] = (Math.random() * 2 - 1) * env;
+    }
+    this.clickNoiseBuffer = snapBuf;
+
+    // Pre-generate smooth friction slide buffer for ABS-on-ABS turn breakaway
+    const slideLen = Math.floor(ctx.sampleRate * 0.075);
+    const slideBuf = ctx.createBuffer(1, slideLen, ctx.sampleRate);
+    const slideData = slideBuf.getChannelData(0);
+    let smooth = 0;
+    for (let i = 0; i < slideLen; i++) {
+      const u = i / slideLen;
+      const env = Math.sin(Math.PI * Math.min(1, u)) * Math.exp(-u * 1.4);
+      const raw = Math.random() * 2 - 1;
+      smooth = smooth * 0.52 + raw * 0.48;
+      slideData[i] = smooth * env;
+    }
+    this.slideNoiseBuffer = slideBuf;
+  }
+
+  private applyListenerPoseToContext(ctx: AudioContext, pose: SpatialListenerPose) {
+    const listener = ctx.listener;
+    if (!listener) return;
+    const now = ctx.currentTime;
+
+    if (
+      typeof listener.positionX !== 'undefined' &&
+      typeof listener.forwardX !== 'undefined' &&
+      typeof listener.upX !== 'undefined'
+    ) {
+      listener.positionX.setValueAtTime(pose.position[0], now);
+      listener.positionY.setValueAtTime(pose.position[1], now);
+      listener.positionZ.setValueAtTime(pose.position[2], now);
+      listener.forwardX.setValueAtTime(pose.forward[0], now);
+      listener.forwardY.setValueAtTime(pose.forward[1], now);
+      listener.forwardZ.setValueAtTime(pose.forward[2], now);
+      listener.upX.setValueAtTime(pose.up[0], now);
+      listener.upY.setValueAtTime(pose.up[1], now);
+      listener.upZ.setValueAtTime(pose.up[2], now);
+    } else {
+      const legacy = listener as AudioListener & {
+        setPosition?: (x: number, y: number, z: number) => void;
+        setOrientation?: (
+          fx: number,
+          fy: number,
+          fz: number,
+          ux: number,
+          uy: number,
+          uz: number
+        ) => void;
+      };
+      legacy.setPosition?.(pose.position[0], pose.position[1], pose.position[2]);
+      legacy.setOrientation?.(
+        pose.forward[0],
+        pose.forward[1],
+        pose.forward[2],
+        pose.up[0],
+        pose.up[1],
+        pose.up[2]
+      );
+    }
+  }
+
+  /**
+   * Syncs the Web Audio 3D AudioListener pose with the Three.js camera without
+   * eagerly constructing an AudioContext prior to user interaction.
+   */
+  public updateListenerPose(pose: SpatialListenerPose) {
+    this.listenerPose = {
+      position: [pose.position[0], pose.position[1], pose.position[2]],
+      forward: [pose.forward[0], pose.forward[1], pose.forward[2]],
+      up: [pose.up[0], pose.up[1], pose.up[2]],
+    };
+    if (this.ctx && this.ctx.state === 'running') {
+      this.applyListenerPoseToContext(this.ctx, this.listenerPose);
+    }
+  }
+
+  public getListenerPose(): SpatialListenerPose {
+    return this.listenerPose;
+  }
+
+  public setSpatialEnabled(enabled: boolean) {
+    this.spatialEnabled = enabled;
+    saveSpatialAudioPref(enabled);
+  }
+
+  public isSpatialEnabled(): boolean {
+    return this.spatialEnabled;
+  }
+
+  public getLastSpatialTrigger(): SpatialAcousticProfile | null {
+    return this.lastSpatialTrigger;
   }
 
   public setMuted(muted: boolean) {
@@ -435,58 +609,288 @@ class CubeAudioSynth {
   }
 
   /**
-   * Tactile magnetic speedcube turn click: short filtered burst + crisp plastic detent snap.
+   * Creates an isolated 3D HRTF PannerNode (or centered direct GainNode when spatial audio is off)
+   * feeding both the dry studio bus and subtle early-reflection room bus, with automatic disconnect.
    */
-  public playTurnClick(heavy = false) {
+  private createSpatialVoiceOutput(
+    ctx: AudioContext,
+    pannerPosition: Vec3,
+    stereoPan: number,
+    cleanupAfterSec: number
+  ): { input: AudioNode; dispose: () => void } {
+    const dryDest = this.spatialDryBus ?? ctx.destination;
+    const roomSend = this.spatialRoomSend;
+
+    let spatialNode: AudioNode;
+    if (this.spatialEnabled) {
+      try {
+        const panner = ctx.createPanner();
+        panner.panningModel = 'HRTF';
+        panner.distanceModel = 'inverse';
+        panner.refDistance = 1.0;
+        panner.maxDistance = 14.0;
+        panner.rolloffFactor = 0.85;
+        panner.coneInnerAngle = 360;
+        panner.coneOuterAngle = 360;
+        panner.coneOuterGain = 0;
+
+        const now = ctx.currentTime;
+        if (typeof panner.positionX !== 'undefined') {
+          panner.positionX.setValueAtTime(pannerPosition[0], now);
+          panner.positionY.setValueAtTime(pannerPosition[1], now);
+          panner.positionZ.setValueAtTime(pannerPosition[2], now);
+        } else {
+          const legacyPanner = panner as PannerNode & {
+            setPosition?: (x: number, y: number, z: number) => void;
+          };
+          legacyPanner.setPosition?.(pannerPosition[0], pannerPosition[1], pannerPosition[2]);
+        }
+
+        panner.connect(dryDest);
+        if (roomSend) panner.connect(roomSend);
+        spatialNode = panner;
+      } catch {
+        // Fallback to StereoPannerNode if HRTF is unavailable in a constrained browser
+        if (typeof ctx.createStereoPanner === 'function') {
+          const stereo = ctx.createStereoPanner();
+          stereo.pan.setValueAtTime(stereoPan, ctx.currentTime);
+          stereo.connect(dryDest);
+          if (roomSend) stereo.connect(roomSend);
+          spatialNode = stereo;
+        } else {
+          const pass = ctx.createGain();
+          pass.connect(dryDest);
+          spatialNode = pass;
+        }
+      }
+    } else {
+      const mono = ctx.createGain();
+      mono.connect(dryDest);
+      spatialNode = mono;
+    }
+
+    let disposed = false;
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      try {
+        spatialNode.disconnect();
+      } catch {
+        // already disconnected
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.setTimeout(dispose, Math.ceil((cleanupAfterSec + 0.08) * 1000));
+    }
+
+    return { input: spatialNode, dispose };
+  }
+
+  /**
+   * Subtle ABS-on-ABS plastic breakaway slide brush triggered right as a layer begins rotating.
+   */
+  public playSpatialTurnSlide(profile: SpatialAcousticProfile) {
+    if (this.muted) return;
+    const ctx = this.ensureContext();
+    if (!ctx || !this.slideNoiseBuffer) return;
+
+    const now = ctx.currentTime;
+    const pitchJitter = 0.96 + Math.random() * 0.08;
+    const voice = this.createSpatialVoiceOutput(
+      ctx,
+      profile.pannerPosition,
+      profile.stereoPan,
+      0.14
+    );
+
+    const src = ctx.createBufferSource();
+    src.buffer = this.slideNoiseBuffer;
+    src.playbackRate.setValueAtTime(
+      (profile.turnKind === 'rotation' ? 0.65 : 1.05) * pitchJitter,
+      now
+    );
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(
+      Math.min(profile.filterCutoffHz, profile.clickFreqHz * 0.62) * pitchJitter,
+      now
+    );
+    bp.Q.setValueAtTime(profile.turnKind === 'slice' ? 2.1 : 1.4, now);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(profile.slideGain, now + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.068);
+
+    src.connect(bp);
+    bp.connect(gain);
+    gain.connect(voice.input);
+    src.onended = () => {
+      try {
+        src.disconnect();
+        bp.disconnect();
+        gain.disconnect();
+      } catch {
+        // ignore
+      }
+      voice.dispose();
+    };
+    src.start(now);
+  }
+
+  /**
+   * Physically modeled 3D-spatialized mechanical speedcube turn click:
+   * 1. ABS/core cavity knock (pitched resonance sweep)
+   * 2. Magnetic detent snap transient (shaped resonant noise + chassis occlusion lowpass)
+   * 3. Spring/core or Mirror brushed-alloy harmonic overtone
+   * 4. Micro corner-settle secondary click (+10ms) for tactile realism
+   */
+  public playSpatialTurnClick(profile: SpatialAcousticProfile) {
+    this.lastSpatialTrigger = profile;
     if (this.muted) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
 
     const now = ctx.currentTime;
-    const pitchJitter = 0.92 + Math.random() * 0.16;
+    // Tiny organic micro-variation (±3.5%) so consecutive identical moves sound alive, never robotic
+    const jitter = 0.965 + Math.random() * 0.07;
 
-    // 1. Short wooden/ABS body knock
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    const baseFreq = (heavy ? 240 : 320) * pitchJitter;
-    osc.frequency.setValueAtTime(baseFreq, now);
-    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.38, now + 0.045);
+    const voice = this.createSpatialVoiceOutput(
+      ctx,
+      profile.pannerPosition,
+      profile.stereoPan,
+      Math.max(0.18, profile.decaySec + 0.12)
+    );
 
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(heavy ? 0.14 : 0.09, now + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+    // Master occlusion filter simulating acoustic shadowing when turning far/back faces
+    const occlusionLp = ctx.createBiquadFilter();
+    occlusionLp.type = 'lowpass';
+    occlusionLp.frequency.setValueAtTime(profile.filterCutoffHz, now);
+    occlusionLp.Q.setValueAtTime(0.65, now);
+    occlusionLp.connect(voice.input);
 
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.06);
+    // 1. ABS / Core Cavity Resonance Knock
+    const bodyOsc = ctx.createOscillator();
+    const bodyGain = ctx.createGain();
+    bodyOsc.type = profile.turnKind === 'rotation' ? 'sine' : 'triangle';
+    const bodyStart = profile.bodyFreqHz * jitter;
+    bodyOsc.frequency.setValueAtTime(bodyStart, now);
+    bodyOsc.frequency.exponentialRampToValueAtTime(
+      Math.max(55, bodyStart * 0.36),
+      now + profile.decaySec * 0.88
+    );
 
-    // 2. Magnetic snap transient (bandpass noise)
-    const bufferSize = Math.floor(ctx.sampleRate * 0.028);
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      const env = Math.exp(-i / (bufferSize * 0.25));
-      data[i] = (Math.random() * 2 - 1) * env;
+    bodyGain.gain.setValueAtTime(0.0001, now);
+    bodyGain.gain.linearRampToValueAtTime(profile.bodyGain, now + 0.0028);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + profile.decaySec);
+
+    bodyOsc.connect(bodyGain);
+    bodyGain.connect(occlusionLp);
+    bodyOsc.start(now);
+    bodyOsc.stop(now + profile.decaySec + 0.012);
+
+    // 2. Magnetic Detent Snap Transient (high-Q resonant noise burst)
+    if (this.clickNoiseBuffer && profile.snapGain > 0.005) {
+      const snapSrc = ctx.createBufferSource();
+      snapSrc.buffer = this.clickNoiseBuffer;
+
+      const snapBp = ctx.createBiquadFilter();
+      snapBp.type = 'bandpass';
+      snapBp.frequency.setValueAtTime(profile.clickFreqHz * jitter, now);
+      snapBp.Q.setValueAtTime(profile.filterQ, now);
+
+      const snapGain = ctx.createGain();
+      snapGain.gain.setValueAtTime(profile.snapGain, now);
+      snapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.029);
+
+      snapSrc.connect(snapBp);
+      snapBp.connect(snapGain);
+      snapGain.connect(occlusionLp);
+      snapSrc.start(now);
+
+      // 4. Micro Corner-Settle Secondary Tick (+10ms) on crisp layer turns
+      if (profile.turnKind !== 'rotation') {
+        const settleTime = now + 0.0105;
+        const settleSrc = ctx.createBufferSource();
+        settleSrc.buffer = this.clickNoiseBuffer;
+        settleSrc.playbackRate.setValueAtTime(1.22, settleTime);
+
+        const settleBp = ctx.createBiquadFilter();
+        settleBp.type = 'bandpass';
+        settleBp.frequency.setValueAtTime(profile.clickFreqHz * 1.18 * jitter, settleTime);
+        settleBp.Q.setValueAtTime(profile.filterQ * 1.15, settleTime);
+
+        const settleGain = ctx.createGain();
+        settleGain.gain.setValueAtTime(profile.snapGain * 0.34, settleTime);
+        settleGain.gain.exponentialRampToValueAtTime(0.0001, settleTime + 0.018);
+
+        settleSrc.connect(settleBp);
+        settleBp.connect(settleGain);
+        settleGain.connect(occlusionLp);
+        settleSrc.start(settleTime);
+      }
     }
 
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
+    // 3. Spring/Core & Brushed-Alloy Metallic Overtone Ring (pronounced on Mirror Blocks & center slices)
+    if (profile.metallicMix > 0.04) {
+      const ringOsc = ctx.createOscillator();
+      const ringGain = ctx.createGain();
+      ringOsc.type = 'sine';
+      const ringFreq = profile.overtoneFreqHz * jitter;
+      ringOsc.frequency.setValueAtTime(ringFreq, now);
+      ringOsc.frequency.exponentialRampToValueAtTime(ringFreq * 0.94, now + 0.042);
 
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime((heavy ? 1800 : 2500) * pitchJitter, now);
-    filter.Q.setValueAtTime(2.4, now);
+      const ringAmp = profile.snapGain * profile.metallicMix * 0.52;
+      const ringDur = 0.022 + profile.metallicMix * 0.048;
+      ringGain.gain.setValueAtTime(0.0001, now);
+      ringGain.gain.linearRampToValueAtTime(ringAmp, now + 0.0018);
+      ringGain.gain.exponentialRampToValueAtTime(0.0001, now + ringDur);
 
-    const nGain = ctx.createGain();
-    nGain.gain.setValueAtTime(heavy ? 0.13 : 0.09, now);
-    nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+      ringOsc.connect(ringGain);
+      ringGain.connect(occlusionLp);
+      ringOsc.start(now);
+      ringOsc.stop(now + ringDur + 0.01);
+    }
 
-    noise.connect(filter);
-    filter.connect(nGain);
-    nGain.connect(ctx.destination);
-    noise.start(now);
+    bodyOsc.onended = () => {
+      try {
+        bodyOsc.disconnect();
+        bodyGain.disconnect();
+        occlusionLp.disconnect();
+      } catch {
+        // ignore
+      }
+      voice.dispose();
+    };
+  }
+
+  /**
+   * Backward-compatible tactile turn click helper (delegates cleanly to centered physical click).
+   */
+  public playTurnClick(heavy = false) {
+    this.playSpatialTurnClick({
+      pannerPosition: [0, 0, 0],
+      azimuthRad: 0,
+      elevationRad: 0,
+      stereoPan: 0,
+      cameraDistance: 9.5,
+      acousticDistance: 1.35,
+      occlusionFactor: 0,
+      bodyFreqHz: heavy ? 245 : 310,
+      clickFreqHz: heavy ? 1860 : 2420,
+      overtoneFreqHz: heavy ? 2950 : 3560,
+      filterCutoffHz: 6200,
+      filterQ: 2.5,
+      bodyGain: heavy ? 0.17 : 0.13,
+      snapGain: heavy ? 0.14 : 0.11,
+      slideGain: 0.03,
+      metallicMix: 0.12,
+      decaySec: heavy ? 0.062 : 0.05,
+      turnKind: heavy ? 'wide' : 'outer',
+      notation: heavy ? 'Rw' : 'R',
+    });
   }
 
   /**
@@ -515,14 +919,18 @@ class CubeAudioSynth {
   }
 
   /**
-   * Magnetic morph swoosh when switching cube types.
+   * Magnetic morph swoosh when switching cube types, anchored cleanly to the cube's 3D space.
    */
-  public playMorphWhoosh() {
+  public playMorphWhoosh(worldPos?: Vec3) {
     if (this.muted) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
 
     const now = ctx.currentTime;
+    const voice = worldPos
+      ? this.createSpatialVoiceOutput(ctx, worldPos, 0, 0.42)
+      : { input: ctx.destination as AudioNode, dispose: () => {} };
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
@@ -535,15 +943,24 @@ class CubeAudioSynth {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.36);
 
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(voice.input);
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        gain.disconnect();
+      } catch {
+        // ignore
+      }
+      voice.dispose();
+    };
     osc.start(now);
     osc.stop(now + 0.38);
   }
 
   /**
-   * Warm harmonic chord arpeggio on puzzle completion.
+   * Warm harmonic chord arpeggio on puzzle completion, blooming gently in 3D stereo around the cube.
    */
-  public playVictoryChord() {
+  public playVictoryChord(worldPos?: Vec3) {
     if (this.muted) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
@@ -551,9 +968,14 @@ class CubeAudioSynth {
     const now = ctx.currentTime;
     // Cmaj9 luminous studio chord: C5, E5, G5, B5, D6
     const notes = [523.25, 659.25, 783.99, 987.77, 1174.66];
+    const base = worldPos ?? [0, 0, 0];
 
     notes.forEach((freq, idx) => {
       const start = now + idx * 0.075;
+      const spread = (idx - 2) * 0.32;
+      const notePos: Vec3 = [base[0] + spread, base[1] + idx * 0.12, base[2]];
+      const voice = this.createSpatialVoiceOutput(ctx, notePos, spread * 0.65, 0.85 + idx * 0.08);
+
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'triangle';
@@ -564,7 +986,16 @@ class CubeAudioSynth {
       gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.72);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(voice.input);
+      osc.onended = () => {
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch {
+          // ignore
+        }
+        voice.dispose();
+      };
       osc.start(start);
       osc.stop(start + 0.75);
     });
@@ -572,3 +1003,4 @@ class CubeAudioSynth {
 }
 
 export const cubeAudio = new CubeAudioSynth();
+

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  AudioLines,
   BookOpen,
   Camera,
   Check,
@@ -66,6 +67,7 @@ interface BottomDockProps {
   customThemes: CustomThemeRecord[];
   soundscape: AmbientSoundscapeId;
   ambientVolume: number;
+  spatialAudioEnabled: boolean;
   puzzleType: PuzzleType;
   activeTab: DockTab;
   collapsed: boolean;
@@ -108,6 +110,7 @@ interface BottomDockProps {
   onExportSnapshot: () => void;
   onSelectSoundscape: (s: AmbientSoundscapeId) => void;
   onAmbientVolumeChange: (v: number) => void;
+  onToggleSpatialAudio: () => void;
   onApplyPattern: (patternId: StickerPatternId) => void;
   onRunAlgorithm: (notations: string[]) => void;
   onSelectLesson: (lesson: LessonStep) => void;
@@ -132,6 +135,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   customThemes,
   soundscape,
   ambientVolume,
+  spatialAudioEnabled,
   puzzleType,
   activeTab,
   collapsed,
@@ -174,6 +178,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onExportSnapshot,
   onSelectSoundscape,
   onAmbientVolumeChange,
+  onToggleSpatialAudio,
   onApplyPattern,
   onRunAlgorithm,
   onSelectLesson,
@@ -1448,6 +1453,31 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         );
                       })}
                     </div>
+                  </div>
+
+                  {/* 3D Spatial Mechanical Audio Toggle */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium inline-flex items-center gap-1.5" style={{ color: theme.ui.muted }}>
+                      <AudioLines
+                        className="w-3.5 h-3.5 shrink-0"
+                        style={{ color: spatialAudioEnabled ? theme.ui.accent : theme.ui.muted }}
+                      />
+                      <span>{t('settings.spatialAudio')}</span>
+                    </span>
+                    <button
+                      type="button"
+                      data-testid="lab-spatial-audio-toggle"
+                      aria-pressed={spatialAudioEnabled}
+                      onClick={onToggleSpatialAudio}
+                      className="h-7 px-2.5 rounded-lg border text-[11px] font-semibold cursor-pointer transition-colors shrink-0"
+                      style={{
+                        backgroundColor: spatialAudioEnabled ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
+                        borderColor: spatialAudioEnabled ? theme.ui.accent : theme.ui.border,
+                        color: spatialAudioEnabled ? theme.ui.accent : theme.ui.muted,
+                      }}
+                    >
+                      {spatialAudioEnabled ? t('settings.spatialAudioOn') : t('settings.spatialAudioOff')}
+                    </button>
                   </div>
 
                   {/* Ambient Focus Soundscapes */}
