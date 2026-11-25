@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
   Copy,
+  Headphones,
   History,
   Link2,
   LogOut,
@@ -37,6 +38,7 @@ import {
 } from '../cube/timerStats';
 import type { PuzzleType, ThemePalette } from '../cube/types';
 import { useArenaClient } from '../cube/useArenaClient';
+import { ArenaAudioPanel } from './ArenaAudioPanel';
 
 interface ArenaModalProps {
   theme: ThemePalette;
@@ -79,6 +81,7 @@ interface VideoFeedBoxProps {
   micOn: boolean;
   isLocal?: boolean;
   muted: boolean;
+  speakerDeviceId?: string;
   mirrored?: boolean;
   name: string;
   subtitle: string;
@@ -100,6 +103,7 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
   micOn,
   isLocal = false,
   muted,
+  speakerDeviceId = 'default',
   mirrored = false,
   name,
   subtitle,
@@ -150,7 +154,7 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
         el.srcObject = null;
       }
     }
-  }, [stream, canRenderVideoElement]);
+  }, [stream, canRenderVideoElement, showFallbackImage]);
 
   // Dedicated remote audio playback with graceful autoplay-unlock prompt if browser blocks audio
   useEffect(() => {
@@ -177,6 +181,16 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
     }
   }, [stream, hasLiveAudioTrack, isLocal, muted]);
 
+  // Route remote opponent audio to the selected speaker / output device when setSinkId is supported
+  useEffect(() => {
+    const el = audioRef.current as (HTMLAudioElement & {
+      setSinkId?: (id: string) => Promise<void>;
+    }) | null;
+    if (!el || isLocal || typeof el.setSinkId !== 'function') return;
+    const sinkTarget = speakerDeviceId === 'default' ? '' : speakerDeviceId;
+    el.setSinkId(sinkTarget).catch(() => {});
+  }, [speakerDeviceId, isLocal, hasLiveAudioTrack]);
+
   const handleUnlockAudio = () => {
     const el = audioRef.current;
     if (!el) return;
@@ -201,21 +215,24 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
         borderColor: theme.ui.border,
       }}
     >
-      {/* Live WebRTC video: soft blurred ambient fill + crisp aspect-preserving foreground */}
+      {/* Live WebRTC video: strictly absolute-inset centered layers so hidden/active elements never shift flex layout */}
       {canRenderVideoElement && (
         <>
-          <video
-            ref={bgVideoRef}
-            aria-hidden="true"
-            autoPlay
-            playsInline
-            muted={true}
-            className={`pointer-events-none absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55 brightness-75 ${
-              mirrored ? '-scale-x-100' : ''
-            } ${showFallbackImage ? 'opacity-0' : ''}`}
-          />
+          {!showFallbackImage && (
+            <video
+              ref={bgVideoRef}
+              aria-hidden="true"
+              autoPlay
+              playsInline
+              muted={true}
+              className={`pointer-events-none absolute inset-0 z-[1] w-full h-full object-cover object-center blur-xl scale-110 opacity-55 brightness-75 ${
+                mirrored ? '-scale-x-100' : ''
+              }`}
+            />
+          )}
           <video
             ref={videoRef}
+            data-testid={testId ? `${testId}-live-video` : undefined}
             autoPlay
             playsInline
             muted={true}
@@ -226,27 +243,27 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
             onLoadedData={(e) => handleVideoFrameCheck(e.currentTarget)}
             onPlaying={(e) => handleVideoFrameCheck(e.currentTarget)}
             onResize={(e) => handleVideoFrameCheck(e.currentTarget)}
-            className={`relative z-[1] w-full h-full object-contain ${
+            className={`absolute inset-0 z-[2] w-full h-full object-contain object-center ${
               mirrored ? '-scale-x-100' : ''
-            } ${showFallbackImage ? 'opacity-0 absolute inset-0' : 'opacity-100'}`}
+            } ${showFallbackImage ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
           />
         </>
       )}
 
-      {/* WebSocket fallback JPEG frame relay: blurred pillarbox fill + unstretched object-contain */}
+      {/* WebSocket fallback JPEG frame relay: blurred pillarbox fill + strictly centered uncropped foreground */}
       {showFallbackImage && fallbackFrame && (
         <>
           <img
             aria-hidden="true"
             src={fallbackFrame}
             alt=""
-            className="pointer-events-none absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-55 brightness-75"
+            className="pointer-events-none absolute inset-0 z-[1] w-full h-full object-cover object-center blur-xl scale-110 opacity-55 brightness-75"
           />
           <img
             data-testid={testId ? `${testId}-fallback-img` : undefined}
             src={fallbackFrame}
             alt={`${name} live camera feed`}
-            className="relative z-[1] w-full h-full object-contain"
+            className="absolute inset-0 z-[2] w-full h-full object-contain object-center"
           />
         </>
       )}
@@ -339,7 +356,7 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
       {/* Measured contrast scrim for video/avatar overlay legibility */}
       <div
         className={`pointer-events-none absolute inset-x-0 bottom-0 z-[5] bg-gradient-to-t from-black/80 via-black/40 to-transparent ${
-          compact ? 'h-10' : 'h-20'
+          compact ? 'h-8' : 'h-20'
         }`}
       />
 
@@ -392,6 +409,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
   const [mobileDrawerTab, setMobileDrawerTab] = useState<'closed' | 'chat' | 'history'>('closed');
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [selfPipMinimized, setSelfPipMinimized] = useState(false);
+  const [audioPanelOpen, setAudioPanelOpen] = useState(false);
 
   const mobileDrawerTabRef = useRef<'closed' | 'chat' | 'history'>('closed');
   const seenChatIdsRef = useRef<Set<string>>(new Set());
@@ -623,7 +641,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
     const isEditable = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return false;
       const tag = target.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -836,6 +854,38 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
         )}
 
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <button
+            type="button"
+            data-testid="arena-audio-settings-btn"
+            aria-expanded={audioPanelOpen}
+            aria-label="Audio controls and device selection"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              cubeAudio.playUiTick();
+              setAudioPanelOpen((prev) => !prev);
+            }}
+            className="relative h-9 px-2.5 sm:px-3 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+            style={{
+              backgroundColor: audioPanelOpen
+                ? theme.ui.accent
+                : !arena.micEnabled || arena.remoteAudioMuted
+                  ? 'rgba(220, 38, 38, 0.1)'
+                  : theme.ui.surfaceSubtle,
+              borderColor: audioPanelOpen
+                ? theme.ui.accent
+                : !arena.micEnabled || arena.remoteAudioMuted
+                  ? 'rgba(220, 38, 38, 0.4)'
+                  : theme.ui.border,
+              color: audioPanelOpen
+                ? theme.ui.accentFg
+                : !arena.micEnabled || arena.remoteAudioMuted
+                  ? '#DC2626'
+                  : theme.ui.text,
+            }}
+          >
+            <Headphones className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">Audio</span>
+          </button>
           {room && (
             <button
               type="button"
@@ -1346,6 +1396,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                     micOn={opponentSeat.micEnabled}
                     isLocal={false}
                     muted={arena.remoteAudioMuted}
+                    speakerDeviceId={arena.selectedSpeakerId}
                     mirrored={false}
                     name={opponentSeat.name}
                     subtitle={
@@ -2379,6 +2430,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                       micOn={opponentSeat.micEnabled}
                       isLocal={false}
                       muted={arena.remoteAudioMuted}
+                      speakerDeviceId={arena.selectedSpeakerId}
                       mirrored={false}
                       name={opponentSeat.name}
                       subtitle={
@@ -2687,6 +2739,26 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
           </>
         )}
       </div>
+
+      {/* In-Match Audio Mute/Unmute & Device Selection Popover / Bottom Sheet */}
+      <ArenaAudioPanel
+        open={audioPanelOpen}
+        onClose={() => setAudioPanelOpen(false)}
+        theme={theme}
+        micEnabled={arena.micEnabled}
+        systemAudioMuted={arena.remoteAudioMuted}
+        audioInputDevices={arena.audioInputDevices}
+        audioOutputDevices={arena.audioOutputDevices}
+        selectedMicId={arena.selectedMicId}
+        selectedSpeakerId={arena.selectedSpeakerId}
+        canSelectSpeaker={arena.canSelectSpeaker}
+        switchingAudioDevice={arena.switchingAudioDevice}
+        onToggleMic={arena.toggleMic}
+        onToggleSystemAudio={arena.toggleRemoteAudioMuted}
+        onSelectMic={arena.selectMicDevice}
+        onSelectSpeaker={arena.selectSpeakerDevice}
+        onRefreshDevices={arena.refreshAudioDevices}
+      />
     </div>
   );
 };

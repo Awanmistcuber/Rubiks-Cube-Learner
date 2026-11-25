@@ -128,6 +128,19 @@ class CubeAudioSynth {
     return this.muted;
   }
 
+  public async setSinkId(deviceId: string): Promise<void> {
+    if (!this.ctx) return;
+    const sinkable = this.ctx as AudioContext & {
+      setSinkId?: (id: string) => Promise<void>;
+    };
+    if (typeof sinkable.setSinkId !== 'function') return;
+    try {
+      await sinkable.setSinkId(deviceId === 'default' ? '' : deviceId);
+    } catch {
+      // ignore unsupported sinkId or permission errors
+    }
+  }
+
   public getSoundscape(): AmbientSoundscapeId {
     return this.soundscape;
   }

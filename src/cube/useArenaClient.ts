@@ -7,6 +7,13 @@ import type {
 import type { SolvePenalty } from './timerStats';
 import type { PuzzleType } from './types';
 import { getBackendConfig } from './backendConfig';
+import { cubeAudio } from './audio';
+import {
+  partitionAudioDevices,
+  resolveSelectedDeviceId,
+  supportsAudioOutputSelection,
+  type AudioDeviceOption,
+} from './audioDevices';
 import {
   computeAspectPreservedFrameSize,
   DEFAULT_FALLBACK_MAX_DIMENSION,
@@ -61,10 +68,19 @@ export interface UseArenaClientResult {
   remoteAudioMuted: boolean;
   mediaNotice: string | null;
   webrtcStatus: WebRtcStatus;
+  audioInputDevices: AudioDeviceOption[];
+  audioOutputDevices: AudioDeviceOption[];
+  selectedMicId: string;
+  selectedSpeakerId: string;
+  canSelectSpeaker: boolean;
+  switchingAudioDevice: boolean;
   initMedia: () => Promise<void>;
   toggleCamera: () => Promise<void>;
   toggleMic: () => Promise<void>;
   toggleRemoteAudioMuted: () => void;
+  selectMicDevice: (deviceId: string) => Promise<void>;
+  selectSpeakerDevice: (deviceId: string) => Promise<void>;
+  refreshAudioDevices: () => Promise<void>;
 
   // Room, Chat & Matchmaking actions
   createRoom: (puzzleType: PuzzleType, name: string) => void;
@@ -101,9 +117,15 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
   const [remoteFallbackFrame, setRemoteFallbackFrame] = useState<string | null>(null);
   const [camEnabled, setCamEnabled] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
-  const [remoteAudioMuted, setRemoteAudioMuted] = useState(false);
+  const [remoteAudioMuted, setRemoteAudioMuted] = useState(() => cubeAudio.isMuted());
   const [mediaNotice, setMediaNotice] = useState<string | null>(null);
   const [webrtcStatus, setWebrtcStatus] = useState<WebRtcStatus>('idle');
+  const [audioInputDevices, setAudioInputDevices] = useState<AudioDeviceOption[]>([]);
+  const [audioOutputDevices, setAudioOutputDevices] = useState<AudioDeviceOption[]>([]);
+  const [selectedMicId, setSelectedMicId] = useState<string>('default');
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState<string>('default');
+  const [switchingAudioDevice, setSwitchingAudioDevice] = useState(false);
+  const canSelectSpeaker = supportsAudioOutputSelection();
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -112,6 +134,8 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
   const localStreamRef = useRef<MediaStream | null>(null);
   const camEnabledRef = useRef(false);
   const micEnabledRef = useRef(false);
+  const selectedMicIdRef = useRef<string>('default');
+  const selectedSpeakerIdRef = useRef<string>('default');
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const activePeerIdRef = useRef<string | null>(null);
@@ -125,6 +149,8 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
   playerIdRef.current = playerId;
   camEnabledRef.current = camEnabled;
   micEnabledRef.current = micEnabled;
+  selectedMicIdRef.current = selectedMicId;
+  selectedSpeakerIdRef.current = selectedSpeakerId;
 
   const sendMessage = useCallback((msg: ArenaClientMessage) => {
     const ws = wsRef.current;
@@ -447,21 +473,58 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     [attachLocalTracksToPc, negotiateOffer]
   );
 
+  const refreshAudioDevices = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      return;
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const { inputs, outputs } = partitionAudioDevices(devices);
+      setAudioInputDevices(inputs);
+      setAudioOutputDevices(outputs);
+
+      const liveTrackDeviceId =
+        localStreamRef.current?.getAudioTracks().find((t) => t.readyState === 'live')?.getSettings()
+          ?.deviceId ?? null;
+
+      setSelectedMicId((prev) =>
+        resolveSelectedDeviceId(inputs, prev !== 'default' ? prev : liveTrackDeviceId ?? prev)
+      );
+      setSelectedSpeakerId((prev) => resolveSelectedDeviceId(outputs, prev));
+    } catch {
+      // ignore restricted device enumeration
+    }
+  }, []);
+
   const initMedia = useCallback(async () => {
-    if (mediaInitializedRef.current && localStreamRef.current) return;
+    if (mediaInitializedRef.current && localStreamRef.current) {
+      await refreshAudioDevices();
+      return;
+    }
     mediaInitializedRef.current = true;
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setMediaNotice('Camera & mic unavailable in this browser — competing in avatar + timer mode.');
       setCamEnabled(false);
       setMicEnabled(false);
+      await refreshAudioDevices();
       return;
     }
+
+    const audioConstraints: MediaTrackConstraints =
+      selectedMicIdRef.current && selectedMicIdRef.current !== 'default'
+        ? {
+            deviceId: { ideal: selectedMicIdRef.current },
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+        : { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: getCameraVideoConstraints(),
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: audioConstraints,
       });
       localStreamRef.current = stream;
       setLocalStream(stream);
@@ -470,13 +533,14 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       setMediaNotice(null);
       sendMessage({ type: 'media:status', camEnabled: true, micEnabled: true });
       await syncTracksToActivePeer(stream);
+      await refreshAudioDevices();
       return;
     } catch {
       // Progressive fallback: try audio-only if camera is absent or blocked
       try {
         const audioStream = await navigator.mediaDevices.getUserMedia({
           video: false,
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          audio: audioConstraints,
         });
         localStreamRef.current = audioStream;
         setLocalStream(audioStream);
@@ -485,15 +549,17 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
         setMediaNotice('No camera detected — competing in audio-only + avatar mode.');
         sendMessage({ type: 'media:status', camEnabled: false, micEnabled: true });
         await syncTracksToActivePeer(audioStream);
+        await refreshAudioDevices();
       } catch {
         setLocalStream(null);
         setCamEnabled(false);
         setMicEnabled(false);
         setMediaNotice('Camera & microphone off — competing in avatar + live timer mode.');
         sendMessage({ type: 'media:status', camEnabled: false, micEnabled: false });
+        await refreshAudioDevices();
       }
     }
-  }, [sendMessage, syncTracksToActivePeer]);
+  }, [refreshAudioDevices, sendMessage, syncTracksToActivePeer]);
 
   const toggleCamera = useCallback(async () => {
     const stream = localStreamRef.current;
@@ -562,9 +628,18 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       return;
     }
     try {
+      const audioConstraint: MediaTrackConstraints =
+        selectedMicIdRef.current && selectedMicIdRef.current !== 'default'
+          ? {
+              deviceId: { ideal: selectedMicIdRef.current },
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            }
+          : { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
       const audStream = await navigator.mediaDevices.getUserMedia({
         video: false,
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: audioConstraint,
       });
       const newTrack = audStream.getAudioTracks()[0];
       if (!newTrack) return;
@@ -579,14 +654,110 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
       setMediaNotice(null);
       sendMessage({ type: 'media:status', camEnabled: camEnabledRef.current, micEnabled: true });
       await syncTracksToActivePeer(combined);
+      await refreshAudioDevices();
     } catch {
       setMediaNotice('Microphone permission declined.');
     }
-  }, [sendMessage, syncTracksToActivePeer]);
+  }, [refreshAudioDevices, sendMessage, syncTracksToActivePeer]);
+
+  const selectMicDevice = useCallback(
+    async (deviceId: string) => {
+      setSelectedMicId(deviceId);
+      selectedMicIdRef.current = deviceId;
+
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        return;
+      }
+
+      setSwitchingAudioDevice(true);
+      try {
+        const baseConstraints = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        };
+        let audStream: MediaStream;
+        try {
+          audStream = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio:
+              deviceId === 'default'
+                ? baseConstraints
+                : { ...baseConstraints, deviceId: { exact: deviceId } },
+          });
+        } catch {
+          audStream = await navigator.mediaDevices.getUserMedia({
+            video: false,
+            audio:
+              deviceId === 'default'
+                ? baseConstraints
+                : { ...baseConstraints, deviceId: { ideal: deviceId } },
+          });
+        }
+
+        const newTrack = audStream.getAudioTracks()[0];
+        if (!newTrack) return;
+
+        // Preserve the user's current mute/unmute state seamlessly during an active match
+        const wasEnabled = micEnabledRef.current;
+        newTrack.enabled = wasEnabled;
+
+        const prevStream = localStreamRef.current;
+        if (prevStream) {
+          for (const oldTrack of prevStream.getAudioTracks()) {
+            try {
+              oldTrack.stop();
+            } catch {
+              // ignore
+            }
+          }
+        }
+
+        const liveVideoTracks =
+          prevStream?.getVideoTracks().filter((t) => t.readyState === 'live') ?? [];
+        const combined = new MediaStream([...liveVideoTracks, newTrack]);
+        localStreamRef.current = combined;
+        setLocalStream(combined);
+        setMediaNotice(null);
+
+        // Hot-swap into the active RTCPeerConnection via replaceTrack without leaving the room
+        await syncTracksToActivePeer(combined);
+        await refreshAudioDevices();
+      } catch {
+        setMediaNotice('Unable to switch microphone — keeping current input.');
+      } finally {
+        setSwitchingAudioDevice(false);
+      }
+    },
+    [refreshAudioDevices, syncTracksToActivePeer]
+  );
+
+  const selectSpeakerDevice = useCallback(async (deviceId: string) => {
+    setSelectedSpeakerId(deviceId);
+    selectedSpeakerIdRef.current = deviceId;
+    await cubeAudio.setSinkId(deviceId);
+  }, []);
 
   const toggleRemoteAudioMuted = useCallback(() => {
-    setRemoteAudioMuted((prev) => !prev);
+    setRemoteAudioMuted((prev) => {
+      const next = !prev;
+      cubeAudio.setMuted(next);
+      return next;
+    });
   }, []);
+
+  // Automatically update available microphone & speaker options when headsets are plugged/unplugged
+  useEffect(() => {
+    if (!active || typeof navigator === 'undefined' || !navigator.mediaDevices) return;
+    refreshAudioDevices();
+    const handleDeviceChange = () => {
+      refreshAudioDevices();
+    };
+    navigator.mediaDevices.addEventListener?.('devicechange', handleDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener?.('devicechange', handleDeviceChange);
+    };
+  }, [active, refreshAudioDevices]);
 
   // Automatic WebSocket video-frame relay while native WebRTC P2P is connecting or blocked by strict NAT.
   // Automatically pauses as soon as native WebRTC P2P reaches 'connected'.
@@ -1006,10 +1177,19 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     remoteAudioMuted,
     mediaNotice,
     webrtcStatus,
+    audioInputDevices,
+    audioOutputDevices,
+    selectedMicId,
+    selectedSpeakerId,
+    canSelectSpeaker,
+    switchingAudioDevice,
     initMedia,
     toggleCamera,
     toggleMic,
     toggleRemoteAudioMuted,
+    selectMicDevice,
+    selectSpeakerDevice,
+    refreshAudioDevices,
     createRoom,
     joinRoom,
     leaveRoom,
