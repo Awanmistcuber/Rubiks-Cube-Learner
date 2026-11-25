@@ -5,6 +5,7 @@ import {
   Camera,
   CloudRain,
   Download,
+  Globe,
   HardDrive,
   Headphones,
   Home,
@@ -24,6 +25,8 @@ import { PUZZLE_META } from '../cube/curriculum';
 import { buildThemePaletteFromCustom, type CustomThemeRecord } from '../cube/customThemes';
 import { THEME_LIST } from '../cube/themes';
 import type { AmbientSoundscapeId, SolveSnapshot, ThemePalette } from '../cube/types';
+import { SUPPORTED_LOCALES, type SupportedLocale } from '../i18n/i18n';
+import { useI18n } from '../i18n/I18nContext';
 import { formatTimer } from './TopHud';
 
 interface PauseModalProps {
@@ -61,6 +64,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   onExportSnapshot,
   onBackToTitle,
 }) => {
+  const { locale, setLocale, t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importMode, setImportMode] = useState<BackupImportMode>('merge');
   const [backupFeedback, setBackupFeedback] = useState<{ ok: boolean; message: string } | null>(null);
@@ -99,17 +103,47 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           className="font-display text-2xl font-bold tracking-tight"
           style={{ color: theme.ui.text }}
         >
-          Studio Paused
+          {t('settings.title')}
         </h2>
         <p className="text-xs sm:text-sm mt-1 mb-5" style={{ color: theme.ui.muted }}>
-          Your cube state and solve timer are safely frozen.
+          {t('settings.subtitle')}
         </p>
 
-        {/* Quick Theme Switcher (Built-in + Custom Figma Palettes) */}
+        {/* UI Language Localization Selector */}
         <div className="mb-4">
+          <label
+            htmlFor="settings-language-select"
+            className="text-xs font-medium inline-flex items-center gap-1.5 mb-2"
+            style={{ color: theme.ui.muted }}
+          >
+            <Globe className="w-3.5 h-3.5" style={{ color: theme.ui.accent }} />
+            <span>{t('settings.language')}</span>
+          </label>
+          <select
+            id="settings-language-select"
+            data-testid="settings-language-select"
+            value={locale}
+            onChange={(e) => setLocale(e.target.value as SupportedLocale)}
+            className="w-full h-10 px-3 rounded-xl border text-xs font-semibold outline-none cursor-pointer"
+            style={{
+              backgroundColor: theme.ui.surfaceSubtle,
+              borderColor: theme.ui.border,
+              color: theme.ui.text,
+            }}
+          >
+            {SUPPORTED_LOCALES.map((loc) => (
+              <option key={loc.code} value={loc.code}>
+                {loc.nativeName} ({loc.englishName})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Quick Theme Switcher (Built-in + Custom Figma Palettes) */}
+        <div className="mb-4 pt-3 border-t" style={{ borderColor: theme.ui.border }}>
           <div className="flex items-center justify-between gap-2 mb-2">
             <span className="text-xs font-medium" style={{ color: theme.ui.muted }}>
-              Studio Theme
+              {t('settings.theme')}
             </span>
             <button
               type="button"
@@ -118,7 +152,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
               style={{ color: theme.ui.accent }}
             >
               <Palette className="w-3 h-3" />
-              <span>Custom Stickers</span>
+              <span>{t('settings.customStickers')}</span>
             </button>
           </div>
           <div className="grid grid-cols-2 gap-1.5 max-h-36 overflow-y-auto kubi-scroll pr-0.5">
@@ -152,7 +186,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           <div className="flex items-center justify-between gap-2 mb-2">
             <span className="text-xs font-medium inline-flex items-center gap-1.5" style={{ color: theme.ui.muted }}>
               <Headphones className="w-3.5 h-3.5" style={{ color: soundscape !== 'off' ? theme.ui.accent : theme.ui.muted }} />
-              Ambient Soundscape
+              {t('settings.ambientSoundscape')}
             </span>
             {soundscape !== 'off' && (
               <span className="font-mono-tabular text-[11px]" style={{ color: theme.ui.muted }}>
@@ -209,10 +243,10 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           <div className="flex items-center justify-between gap-2 mb-2">
             <span className="text-xs font-medium inline-flex items-center gap-1.5" style={{ color: theme.ui.muted }}>
               <HardDrive className="w-3.5 h-3.5" style={{ color: theme.ui.accent }} />
-              Backup &amp; Restore
+              {t('settings.backupRestore')}
             </span>
             <span className="font-mono-tabular text-[11px]" style={{ color: theme.ui.muted }}>
-              {customThemes.length} themes · {solveCount} solves
+              {t('settings.backupSummary', { themes: customThemes.length, solves: solveCount })}
             </span>
           </div>
 
@@ -229,7 +263,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
               }}
             >
               <Download className="w-3.5 h-3.5 shrink-0" />
-              <span>Export JSON</span>
+              <span>{t('settings.exportJson')}</span>
             </button>
 
             <button
@@ -244,7 +278,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
               }}
             >
               <Upload className="w-3.5 h-3.5 shrink-0" />
-              <span>Import JSON</span>
+              <span>{t('settings.importJson')}</span>
             </button>
           </div>
 
@@ -260,7 +294,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             }}
           >
             <Camera className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
-            <span>Export High-Res Cube PNG</span>
+            <span>{t('settings.exportPng')}</span>
           </button>
 
           <input
@@ -274,7 +308,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           />
 
           <div className="flex items-center justify-between gap-2 mt-2 text-[11px]">
-            <span style={{ color: theme.ui.muted }}>Import mode</span>
+            <span style={{ color: theme.ui.muted }}>{t('settings.importMode')}</span>
             <div
               className="inline-flex items-center gap-0.5 p-0.5 rounded-lg border"
               style={{ borderColor: theme.ui.border, backgroundColor: theme.ui.surfaceSubtle }}
@@ -288,13 +322,13 @@ export const PauseModal: React.FC<PauseModalProps> = ({
                     data-testid={`import-mode-${m}`}
                     aria-pressed={active}
                     onClick={() => setImportMode(m)}
-                    className="h-6 px-2 rounded-md text-[11px] font-semibold capitalize cursor-pointer"
+                    className="h-6 px-2 rounded-md text-[11px] font-semibold cursor-pointer"
                     style={{
                       backgroundColor: active ? theme.ui.surface : 'transparent',
                       color: active ? theme.ui.accent : theme.ui.muted,
                     }}
                   >
-                    {m}
+                    {m === 'merge' ? t('settings.merge') : t('settings.replace')}
                   </button>
                 );
               })}
@@ -328,7 +362,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             }}
           >
             <Play className="w-4 h-4" />
-            <span>Resume</span>
+            <span>{t('settings.resume')}</span>
           </button>
 
           <button
@@ -342,7 +376,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             }}
           >
             <RotateCcw className="w-4 h-4" />
-            <span>Reset Puzzle</span>
+            <span>{t('settings.resetPuzzle')}</span>
           </button>
 
           <button
@@ -356,7 +390,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             }}
           >
             <Home className="w-4 h-4" />
-            <span>Back to Title</span>
+            <span>{t('settings.backToTitle')}</span>
           </button>
         </div>
       </div>
@@ -553,6 +587,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   onOpenDailyLeaderboard,
   onDismiss,
 }) => {
+  const { t } = useI18n();
   return (
     <div
       role="dialog"
@@ -583,11 +618,11 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
               className="font-display text-2xl font-bold tracking-tight leading-tight"
               style={{ color: theme.ui.text }}
             >
-              Cube Solved
+              {t('victory.title')}
             </h2>
             <p className="text-xs" style={{ color: theme.ui.muted }}>
               {PUZZLE_META[snapshot.puzzleType].label}
-              {snapshot.isNewRecord ? ' · New Personal Best' : ''}
+              {snapshot.isNewRecord ? ` · ${t('victory.newRecord')}` : ''}
             </p>
           </div>
         </div>
@@ -602,7 +637,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
         >
           <div>
             <div className="text-[11px]" style={{ color: theme.ui.muted }}>
-              Clear Time
+              {t('victory.clearTime')}
             </div>
             <div className="font-mono-tabular text-base font-bold mt-0.5" style={{ color: theme.ui.text }}>
               {formatTimer(snapshot.elapsedMs)}
@@ -611,7 +646,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
 
           <div>
             <div className="text-[11px]" style={{ color: theme.ui.muted }}>
-              Moves
+              {t('victory.moves')}
             </div>
             <div className="font-mono-tabular text-base font-bold mt-0.5" style={{ color: theme.ui.text }}>
               {snapshot.moves}
@@ -620,7 +655,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
 
           <div>
             <div className="text-[11px]" style={{ color: theme.ui.muted }}>
-              Best Time
+              {t('victory.bestTime')}
             </div>
             <div className="font-mono-tabular text-base font-bold mt-0.5" style={{ color: theme.ui.accent }}>
               {snapshot.bestMs !== null ? formatTimer(snapshot.bestMs) : formatTimer(snapshot.elapsedMs)}
@@ -661,7 +696,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
               }}
             >
               <Trophy className="w-4 h-4" />
-              <span>View Global Leaderboard</span>
+              <span>{t('victory.viewLeaderboard')}</span>
             </button>
           ) : (
             <button
@@ -675,7 +710,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
               }}
             >
               <Shuffle className="w-4 h-4" />
-              <span>New Scramble</span>
+              <span>{t('victory.newScramble')}</span>
             </button>
           )}
 
@@ -691,7 +726,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
               }}
             >
               <BookOpen className="w-4 h-4" />
-              <span>Lessons</span>
+              <span>{t('victory.lessons')}</span>
             </button>
 
             <button
@@ -704,7 +739,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                 color: theme.ui.muted,
               }}
             >
-              <span>Inspect Cube</span>
+              <span>{t('victory.inspectCube')}</span>
             </button>
           </div>
         </div>

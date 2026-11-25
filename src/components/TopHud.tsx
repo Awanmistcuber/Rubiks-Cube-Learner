@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { PUZZLE_META } from '../cube/curriculum';
 import type { PuzzleType, ThemePalette } from '../cube/types';
+import { useI18n } from '../i18n/I18nContext';
 
 interface TopHudProps {
   theme: ThemePalette;
@@ -70,13 +71,14 @@ export const TopHud: React.FC<TopHudProps> = ({
   onToggleShortcuts,
   onPause,
 }) => {
+  const { t } = useI18n();
   const statusLabel = activeDailyDateKey
     ? `Daily · ${activeDailyDateKey}`
     : isSolved
       ? hasScrambled
-        ? 'Solved'
-        : 'Ready'
-      : 'In Progress';
+        ? t('hud.solved')
+        : t('hud.ready')
+      : t('hud.inProgress');
 
   return (
     <header
@@ -133,7 +135,7 @@ export const TopHud: React.FC<TopHudProps> = ({
         >
           <div className="flex items-baseline gap-1 lg:gap-1.5 shrink-0">
             <span className="text-[11px] font-medium" style={{ color: theme.ui.muted }}>
-              Moves
+              {t('hud.moves')}
             </span>
             <span
               className="font-mono-tabular text-xs lg:text-sm font-semibold"
@@ -148,7 +150,7 @@ export const TopHud: React.FC<TopHudProps> = ({
 
           <div className="flex items-baseline gap-1 lg:gap-1.5 shrink-0">
             <span className="text-[11px] font-medium" style={{ color: theme.ui.muted }}>
-              Time
+              {t('hud.time')}
             </span>
             <span
               className="font-mono-tabular text-xs lg:text-sm font-semibold"
@@ -289,7 +291,7 @@ export const TopHud: React.FC<TopHudProps> = ({
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="flex items-baseline gap-1">
             <span className="text-[11px]" style={{ color: theme.ui.muted }}>
-              Moves
+              {t('hud.moves')}
             </span>
             <span
               className="font-mono-tabular text-xs font-semibold"
@@ -302,7 +304,7 @@ export const TopHud: React.FC<TopHudProps> = ({
           <span className="w-px h-3" style={{ backgroundColor: theme.ui.border }} aria-hidden="true" />
           <div className="flex items-baseline gap-1">
             <span className="text-[11px]" style={{ color: theme.ui.muted }}>
-              Time
+              {t('hud.time')}
             </span>
             <span
               className="font-mono-tabular text-xs font-semibold"
@@ -358,12 +360,12 @@ export const TopHud: React.FC<TopHudProps> = ({
             {dockCollapsed ? (
               <>
                 <PanelRightOpen className="w-3.5 h-3.5" />
-                <span>Show</span>
+                <span>{t('hud.show')}</span>
               </>
             ) : (
               <>
                 <PanelRightClose className="w-3.5 h-3.5" />
-                <span>Hide</span>
+                <span>{t('hud.hide')}</span>
               </>
             )}
           </button>
@@ -396,7 +398,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
           >
             <Timer className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden lg:inline">Stopwatch</span>
+            <span className="hidden lg:inline">{t('hud.stopwatch')}</span>
           </button>
 
           <button
@@ -412,7 +414,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             style={{ color: theme.ui.text }}
           >
             <BarChart3 className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden lg:inline">Stats</span>
+            <span className="hidden lg:inline">{t('hud.stats')}</span>
           </button>
 
           <button
@@ -432,7 +434,7 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
           >
             <Swords className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden lg:inline">1v1 Arena</span>
+            <span className="hidden lg:inline">{t('hud.arena')}</span>
           </button>
         </div>
 
@@ -528,12 +530,12 @@ export const TopHud: React.FC<TopHudProps> = ({
             {dockCollapsed ? (
               <>
                 <PanelRightOpen className="w-4 h-4" />
-                <span className="hidden xl:inline">Show</span>
+                <span className="hidden xl:inline">{t('hud.show')}</span>
               </>
             ) : (
               <>
                 <PanelRightClose className="w-4 h-4" />
-                <span className="hidden xl:inline">Hide</span>
+                <span className="hidden xl:inline">{t('hud.hide')}</span>
               </>
             )}
           </button>

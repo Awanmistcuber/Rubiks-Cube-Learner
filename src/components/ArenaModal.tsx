@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Search,
   Swords,
+  Trophy,
   Users,
   Video,
   VideoOff,
@@ -29,6 +30,15 @@ import {
   type ArenaPlayerState,
   type ArenaTimerPhase,
 } from '../cube/arenaEngine';
+import {
+  buildMatchRecordFromRoom,
+  clearArenaMatchHistory,
+  deleteArenaMatchRecord,
+  loadArenaMatchHistory,
+  saveArenaMatchHistory,
+  upsertArenaMatchRecord,
+  type ArenaMatchRecord,
+} from '../cube/arenaHistory';
 import { PUZZLE_META } from '../cube/curriculum';
 import { loadPlayerName, savePlayerName } from '../cube/dailyChallenge';
 import {
@@ -38,7 +48,9 @@ import {
 } from '../cube/timerStats';
 import type { PuzzleType, ThemePalette } from '../cube/types';
 import { useArenaClient } from '../cube/useArenaClient';
+import { useI18n } from '../i18n/I18nContext';
 import { ArenaAudioPanel } from './ArenaAudioPanel';
+import { ArenaMatchHistoryDashboard } from './ArenaMatchHistoryDashboard';
 
 interface ArenaModalProps {
   theme: ThemePalette;
@@ -389,6 +401,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
   initialRoomCode,
   onClose,
 }) => {
+  const { t } = useI18n();
   const arena = useArenaClient(true);
 
   const [playerName, setPlayerName] = useState<string>(() => loadPlayerName() || 'Speedcuber');
@@ -398,6 +411,13 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
   );
   const [copiedFlag, setCopiedFlag] = useState<'code' | 'link' | 'scramble' | null>(null);
   const [queueElapsedSec, setQueueElapsedSec] = useState(0);
+
+  // Persistent local 1v1 Match History dashboard state
+  const [lobbyView, setLobbyView] = useState<'lobby' | 'history'>('lobby');
+  const [matchHistory, setMatchHistory] = useState<ArenaMatchRecord[]>(() =>
+    loadArenaMatchHistory()
+  );
+  const lastSavedMatchDigestRef = useRef<string>('');
 
   // Independent local Spacebar / touch timer state
   const [localPhase, setLocalPhase] = useState<ArenaTimerPhase>('idle');
@@ -469,12 +489,53 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
     }
   }, [room]);
 
+  // Automatically record & persist 1v1 Arena match outcomes + solve averages to localStorage.
+  // Uses the server's immutable room.createdAt timestamp so the same match session never duplicates
+  // even across reconnects, opponent disconnects, or StrictMode effect replays.
+  useEffect(() => {
+    if (!room || !playerId || room.history.length === 0) return;
+
+    const sessionStartedAt =
+      typeof room.createdAt === 'number' && Number.isFinite(room.createdAt)
+        ? room.createdAt
+        : room.history[0]?.completedAt ?? Date.now();
+    const sessionId = `${room.roomCode}-${sessionStartedAt}`;
+    const latestRound = room.history[room.history.length - 1];
+    const oppName = room.players.find((p) => p.playerId !== playerId)?.name ?? '';
+    const digest = `${sessionId}|${room.history.length}|${latestRound?.completedAt ?? 0}|${oppName}|${room.players
+      .map((p) => `${p.playerId}:${p.wins}`)
+      .join(',')}`;
+
+    if (lastSavedMatchDigestRef.current === digest) return;
+    lastSavedMatchDigestRef.current = digest;
+
+    const record = buildMatchRecordFromRoom(room, playerId, sessionId, sessionStartedAt);
+    if (!record) return;
+
+    setMatchHistory((prev) => {
+      const next = upsertArenaMatchRecord(prev, record);
+      saveArenaMatchHistory(next);
+      return next;
+    });
+  }, [room, playerId]);
+
+  const handleDeleteMatchRecord = useCallback((id: string) => {
+    cubeAudio.playUiTick();
+    setMatchHistory(deleteArenaMatchRecord(id));
+  }, []);
+
+  const handleClearMatchHistory = useCallback(() => {
+    cubeAudio.playUiTick();
+    clearArenaMatchHistory();
+    setMatchHistory([]);
+  }, []);
+
   // Surface fresh preset chat / emoji messages as floating reaction bubbles + mobile unread count
   const roomChat = room?.chat;
   useEffect(() => {
     if (!room) {
       seenChatIdsRef.current.clear();
-      setReactionByPlayer({});
+      setReactionByPlayer((prev) => (Object.keys(prev).length === 0 ? prev : {}));
       setMobileDrawerTab('closed');
       setUnreadChatCount(0);
       setSelfPipMinimized(false);
@@ -807,7 +868,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Swords className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" style={{ color: theme.ui.accent }} />
           <h2 className="font-display text-sm sm:text-lg font-bold tracking-tight whitespace-nowrap shrink-0">
-            1v1 Arena
+            {t('arena.title')}
           </h2>
           {room && mySeat && (
             <span
@@ -837,8 +898,8 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
           </span>
         </div>
 
-        {/* Center Live Match Score (visible only when inside a room on md+) */}
-        {room && mySeat && (
+        {/* Center Live Match Score (in-room on md+) OR Lobby / Match History Tab Switcher (!room on md+) */}
+        {room && mySeat ? (
           <div
             data-testid="arena-scoreboard"
             className="hidden md:flex items-center gap-3 font-display text-base font-bold tabular-nums whitespace-nowrap"
@@ -850,6 +911,66 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
             <span className="truncate max-w-[140px]" style={{ color: theme.ui.muted }}>
               {opponentSeat?.name ?? 'Waiting...'}
             </span>
+          </div>
+        ) : (
+          <div
+            role="tablist"
+            aria-label="Arena views"
+            className="hidden md:inline-flex items-center p-1 rounded-xl border"
+            style={{
+              backgroundColor: theme.ui.surfaceSubtle,
+              borderColor: theme.ui.border,
+            }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={lobbyView === 'lobby'}
+              data-testid="arena-tab-lobby"
+              onClick={() => {
+                cubeAudio.playUiTick();
+                setLobbyView('lobby');
+              }}
+              className="h-8 px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              style={{
+                backgroundColor: lobbyView === 'lobby' ? theme.ui.surface : 'transparent',
+                color: lobbyView === 'lobby' ? theme.ui.text : theme.ui.muted,
+                boxShadow: lobbyView === 'lobby' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+              }}
+            >
+              <Swords className="w-3.5 h-3.5" />
+              <span>{t('arena.playLobby')}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={lobbyView === 'history'}
+              data-testid="arena-tab-history"
+              onClick={() => {
+                cubeAudio.playUiTick();
+                setLobbyView('history');
+              }}
+              className="h-8 px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              style={{
+                backgroundColor: lobbyView === 'history' ? theme.ui.surface : 'transparent',
+                color: lobbyView === 'history' ? theme.ui.text : theme.ui.muted,
+                boxShadow: lobbyView === 'history' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+              }}
+            >
+              <Trophy className="w-3.5 h-3.5" style={{ color: lobbyView === 'history' ? theme.ui.accent : undefined }} />
+              <span>{t('arena.matchHistory')}</span>
+              {matchHistory.length > 0 && (
+                <span
+                  className="font-mono-tabular text-[10px] px-1.5 py-0.5 rounded-md"
+                  style={{
+                    backgroundColor: theme.ui.accentSoft,
+                    color: theme.ui.accent,
+                  }}
+                >
+                  {matchHistory.length}
+                </span>
+              )}
+            </button>
           </div>
         )}
 
@@ -884,7 +1005,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
             }}
           >
             <Headphones className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Audio</span>
+            <span className="hidden sm:inline">{t('arena.audio')}</span>
           </button>
           {room && (
             <button
@@ -902,8 +1023,8 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
               }}
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Leave Room</span>
-              <span className="sm:hidden">Leave</span>
+              <span className="hidden sm:inline">{t('arena.leaveRoom')}</span>
+              <span className="sm:hidden">{t('arena.leave')}</span>
             </button>
           )}
           <button
@@ -921,7 +1042,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
             }}
           >
             <X className="w-3.5 h-3.5" />
-            <span>3D Cube</span>
+            <span>{t('arena.backToCube')}</span>
           </button>
         </div>
       </header>
@@ -956,20 +1077,98 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
         }`}
       >
         {!room ? (
-          /* ===================== LOBBY VIEW ===================== */
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-            <div className="mb-6">
-              <h3
-                className="font-display text-2xl sm:text-3xl font-bold tracking-tight"
-                style={{ textWrap: 'balance' }}
+          <div className="w-full">
+            {/* Mobile Lobby / Match History Switcher (< md) */}
+            <div className="md:hidden px-4 pt-3 pb-1">
+              <div
+                role="tablist"
+                aria-label="Arena mobile views"
+                className="grid grid-cols-2 gap-1 p-1 rounded-xl border"
+                style={{
+                  backgroundColor: theme.ui.surfaceSubtle,
+                  borderColor: theme.ui.border,
+                }}
               >
-                Head-to-Head Online Speedcubing
-              </h3>
-              <p className="text-sm mt-1.5" style={{ color: theme.ui.muted }}>
-                Solve a shared WCA scramble side-by-side over live video &amp; audio with
-                independent Spacebar timers and a continuous win tally.
-              </p>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={lobbyView === 'lobby'}
+                  data-testid="arena-mobile-tab-lobby"
+                  onClick={() => {
+                    cubeAudio.playUiTick();
+                    setLobbyView('lobby');
+                  }}
+                  className="h-9 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                  style={{
+                    backgroundColor: lobbyView === 'lobby' ? theme.ui.surface : 'transparent',
+                    color: lobbyView === 'lobby' ? theme.ui.text : theme.ui.muted,
+                    boxShadow: lobbyView === 'lobby' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                  }}
+                >
+                  <Swords className="w-3.5 h-3.5" />
+                  <span>{t('arena.playLobby')}</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={lobbyView === 'history'}
+                  data-testid="arena-mobile-tab-history"
+                  onClick={() => {
+                    cubeAudio.playUiTick();
+                    setLobbyView('history');
+                  }}
+                  className="h-9 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                  style={{
+                    backgroundColor: lobbyView === 'history' ? theme.ui.surface : 'transparent',
+                    color: lobbyView === 'history' ? theme.ui.text : theme.ui.muted,
+                    boxShadow: lobbyView === 'history' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                  }}
+                >
+                  <Trophy
+                    className="w-3.5 h-3.5"
+                    style={{ color: lobbyView === 'history' ? theme.ui.accent : undefined }}
+                  />
+                  <span>{t('arena.matchHistory')}</span>
+                  {matchHistory.length > 0 && (
+                    <span
+                      className="font-mono-tabular text-[10px] px-1.5 py-0.5 rounded-md"
+                      style={{
+                        backgroundColor: theme.ui.accentSoft,
+                        color: theme.ui.accent,
+                      }}
+                    >
+                      {matchHistory.length}
+                    </span>
+                  )}
+                </button>
+              </div>
             </div>
+
+            {lobbyView === 'history' ? (
+              <ArenaMatchHistoryDashboard
+                theme={theme}
+                records={matchHistory}
+                onDeleteRecord={handleDeleteMatchRecord}
+                onClearAll={handleClearMatchHistory}
+                onGoToLobby={() => {
+                  cubeAudio.playUiTick();
+                  setLobbyView('lobby');
+                }}
+              />
+            ) : (
+              /* ===================== LOBBY VIEW ===================== */
+              <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 sm:py-8">
+                <div className="mb-6">
+                  <h3
+                    className="font-display text-2xl sm:text-3xl font-bold tracking-tight"
+                    style={{ textWrap: 'balance' }}
+                  >
+                    {t('arena.lobbyHeading')}
+                  </h3>
+                  <p className="text-sm mt-1.5" style={{ color: theme.ui.muted }}>
+                    {t('arena.lobbySubheading')}
+                  </p>
+                </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               {/* Left Column: Camera/Audio Preview & Profile */}
@@ -1065,7 +1264,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                       className="block text-xs font-medium mb-1.5"
                       style={{ color: theme.ui.text }}
                     >
-                      Competitor Name
+                      {t('arena.competitorName')}
                     </label>
                     <input
                       id="arena-player-name"
@@ -1085,7 +1284,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
 
                   <div>
                     <div className="flex items-center justify-between text-xs mb-1.5">
-                      <span className="font-medium">Puzzle Event</span>
+                      <span className="font-medium">{t('arena.puzzleEvent')}</span>
                       <span style={{ color: theme.ui.muted }}>
                         {PUZZLE_META[selectedPuzzle].label}
                       </span>
@@ -1138,7 +1337,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                 {/* Option 1: Random Online Matchmaking */}
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-1">
-                    <h4 className="font-display text-lg font-bold">Random Online Matchmaking</h4>
+                    <h4 className="font-display text-lg font-bold">{t('arena.randomMatchmaking')}</h4>
                     <span className="text-xs font-medium" style={{ color: theme.ui.muted }}>
                       {arena.queueCounts[selectedPuzzle] > 0
                         ? `${arena.queueCounts[selectedPuzzle]} waiting for ${PUZZLE_META[selectedPuzzle].shortLabel}`
@@ -1211,7 +1410,9 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                       }}
                     >
                       <Search className="w-4 h-4" />
-                      <span>Find Random Opponent ({PUZZLE_META[selectedPuzzle].shortLabel})</span>
+                      <span>
+                        {t('arena.findOpponent', { puzzle: PUZZLE_META[selectedPuzzle].shortLabel })}
+                      </span>
                     </button>
                   )}
                 </div>
@@ -1222,7 +1423,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                 <div className="space-y-4">
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-1">
-                      <h4 className="font-display text-lg font-bold">Private 2-Player Room</h4>
+                      <h4 className="font-display text-lg font-bold">{t('arena.privateRoom')}</h4>
                       <span className="text-xs font-medium" style={{ color: theme.ui.muted }}>
                         Max 2 competitors
                       </span>
@@ -1249,7 +1450,9 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                     }}
                   >
                     <Users className="w-4 h-4" style={{ color: theme.ui.accent }} />
-                    <span>Create Private Room ({PUZZLE_META[selectedPuzzle].shortLabel})</span>
+                    <span>
+                      {t('arena.createRoom', { puzzle: PUZZLE_META[selectedPuzzle].shortLabel })}
+                    </span>
                   </button>
 
                   <form onSubmit={handleJoinSubmit} className="flex flex-col sm:flex-row gap-2">
@@ -1280,12 +1483,14 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                         color: theme.ui.bg,
                       }}
                     >
-                      Join Room
+                      {t('arena.joinRoom')}
                     </button>
                   </form>
                 </div>
               </section>
             </div>
+          </div>
+            )}
           </div>
         ) : (
           /* ===================== LIVE 1v1 COMPETITION STAGE ===================== */

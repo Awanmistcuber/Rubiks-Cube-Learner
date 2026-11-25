@@ -1,7 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Headphones, Mic, MicOff, RefreshCw, Volume2, VolumeX, X } from 'lucide-react';
 import type { AudioDeviceOption } from '../cube/audioDevices';
 import type { ThemePalette } from '../cube/types';
+import { useI18n } from '../i18n/I18nContext';
 
 export interface ArenaAudioPanelProps {
   open: boolean;
@@ -45,18 +46,24 @@ export const ArenaAudioPanel: React.FC<ArenaAudioPanelProps> = ({
   onSelectSpeaker,
   onRefreshDevices,
 }) => {
+  const { t } = useI18n();
+  const onCloseRef = useRef(onClose);
+  const onRefreshRef = useRef(onRefreshDevices);
+  onCloseRef.current = onClose;
+  onRefreshRef.current = onRefreshDevices;
+
   useEffect(() => {
     if (!open) return;
-    onRefreshDevices();
+    onRefreshRef.current();
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose, onRefreshDevices]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -121,7 +128,7 @@ export const ArenaAudioPanel: React.FC<ArenaAudioPanelProps> = ({
         >
           <div className="flex items-center gap-2 min-w-0">
             <Headphones className="w-4 h-4 shrink-0" style={{ color: theme.ui.accent }} />
-            <h3 className="font-display text-sm font-bold truncate">Audio &amp; Devices</h3>
+            <h3 className="font-display text-sm font-bold truncate">{t('arena.audioAndDevices')}</h3>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <button
@@ -186,7 +193,7 @@ export const ArenaAudioPanel: React.FC<ArenaAudioPanelProps> = ({
                 <MicOff className="w-4 h-4 shrink-0" />
               )}
               <div className="min-w-0">
-                <div className="text-xs font-semibold leading-tight truncate">Microphone</div>
+                <div className="text-xs font-semibold leading-tight truncate">{t('arena.microphone')}</div>
                 <div
                   className="text-[11px] leading-tight mt-0.5 truncate"
                   style={{ color: micEnabled ? theme.ui.muted : '#DC2626' }}
@@ -219,7 +226,7 @@ export const ArenaAudioPanel: React.FC<ArenaAudioPanelProps> = ({
                 <Volume2 className="w-4 h-4 shrink-0" style={{ color: '#16A34A' }} />
               )}
               <div className="min-w-0">
-                <div className="text-xs font-semibold leading-tight truncate">System Audio</div>
+                <div className="text-xs font-semibold leading-tight truncate">{t('arena.systemAudio')}</div>
                 <div
                   className="text-[11px] leading-tight mt-0.5 truncate"
                   style={{ color: !systemAudioMuted ? theme.ui.muted : '#DC2626' }}
@@ -236,7 +243,7 @@ export const ArenaAudioPanel: React.FC<ArenaAudioPanelProps> = ({
               htmlFor="arena-mic-device-select"
               className="text-xs font-semibold flex items-center justify-between gap-2"
             >
-              <span>Microphone Input</span>
+              <span>{t('arena.micInput')}</span>
               <span className="text-[11px] font-normal" style={{ color: theme.ui.muted }}>
                 {micOptions.length} available
               </span>
@@ -272,7 +279,7 @@ export const ArenaAudioPanel: React.FC<ArenaAudioPanelProps> = ({
               htmlFor="arena-speaker-device-select"
               className="text-xs font-semibold flex items-center justify-between gap-2"
             >
-              <span>Speaker / System Output</span>
+              <span>{t('arena.speakerOutput')}</span>
               <span className="text-[11px] font-normal" style={{ color: theme.ui.muted }}>
                 {canSelectSpeaker ? `${speakerOptions.length} available` : 'OS Managed'}
               </span>
@@ -317,7 +324,7 @@ export const ArenaAudioPanel: React.FC<ArenaAudioPanelProps> = ({
           </div>
 
           <p className="text-[11px] leading-relaxed" style={{ color: theme.ui.muted }}>
-            Changes apply immediately without leaving your active match or resetting the timer.
+            {t('arena.audioLiveNote')}
           </p>
         </div>
       </div>

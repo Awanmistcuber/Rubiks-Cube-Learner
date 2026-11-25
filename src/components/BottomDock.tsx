@@ -8,6 +8,7 @@ import {
   CloudRain,
   Compass,
   Gamepad2,
+  Globe,
   Grid3X3,
   Headphones,
   Layers,
@@ -57,6 +58,8 @@ import type {
   SolveMethodId,
   ThemePalette,
 } from '../cube/types';
+import { SUPPORTED_LOCALES, type SupportedLocale } from '../i18n/i18n';
+import { useI18n } from '../i18n/I18nContext';
 
 interface BottomDockProps {
   theme: ThemePalette;
@@ -178,6 +181,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onStepLesson,
   onPlayLesson,
 }) => {
+  const { locale, setLocale, t } = useI18n();
   const [counterClockwise, setCounterClockwise] = useState(false);
   const [sequenceInput, setSequenceInput] = useState('');
   const [sequenceError, setSequenceError] = useState<string | null>(null);
@@ -342,10 +346,10 @@ export const BottomDock: React.FC<BottomDockProps> = ({
         >
           {(
             [
-              { id: 'play', label: 'Play', icon: Gamepad2 },
-              { id: 'learn', label: 'Learn', icon: BookOpen },
-              { id: 'lab', label: 'Lab', icon: SlidersHorizontal },
-              { id: 'coach', label: 'Coach', icon: Sparkles },
+              { id: 'play', label: t('dock.tab.play'), icon: Gamepad2 },
+              { id: 'learn', label: t('dock.tab.learn'), icon: BookOpen },
+              { id: 'lab', label: t('dock.tab.lab'), icon: SlidersHorizontal },
+              { id: 'coach', label: t('dock.tab.coach'), icon: Sparkles },
             ] as const
           ).map(({ id, label, icon: Icon }) => {
             const active = activeTab === id;
@@ -432,7 +436,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                 }}
               >
                 <Shuffle className="w-3.5 h-3.5 shrink-0" />
-                <span>Scramble</span>
+                <span>{t('dock.scramble')}</span>
               </button>
 
               <button
@@ -449,7 +453,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                 }}
               >
                 <Compass className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
-                <span>Hint</span>
+                <span>{t('dock.hint')}</span>
               </button>
 
               <button
@@ -483,7 +487,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   }}
                 >
                   <Pause className="w-3.5 h-3.5 shrink-0" />
-                  <span>Pause</span>
+                  <span>{t('dock.pause')}</span>
                 </button>
               ) : (
                 <button
@@ -499,7 +503,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   }}
                 >
                   <Wand2 className="w-3.5 h-3.5 shrink-0" />
-                  <span>Auto-Solve</span>
+                  <span>{t('dock.autoSolve')}</span>
                 </button>
               )}
 
@@ -1231,7 +1235,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium flex items-center gap-1.5" style={{ color: theme.ui.text }}>
                         <Layers className="w-3.5 h-3.5" style={{ color: theme.ui.accent }} />
-                        Exploded Core View
+                        {t('dock.explodedCore')}
                       </span>
                       <span className="font-mono-tabular" style={{ color: theme.ui.muted }}>
                         {Math.round(explodeAmount * 100)}%
@@ -1244,7 +1248,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       step={0.01}
                       value={explodeAmount}
                       onChange={(e) => onExplodeChange(parseFloat(e.target.value))}
-                      aria-label="Exploded Core View"
+                      aria-label={t('dock.explodedCore')}
                       className="kubi-slider w-full"
                     />
                   </label>
@@ -1252,7 +1256,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   <label className="flex flex-col gap-1.5">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium" style={{ color: theme.ui.text }}>
-                        Animation Tempo
+                        {t('dock.animationTempo')}
                       </span>
                       <span className="font-mono-tabular" style={{ color: theme.ui.muted }}>
                         {turnSpeed.toFixed(1)}×
@@ -1265,7 +1269,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       step={0.1}
                       value={turnSpeed}
                       onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
-                      aria-label="Animation Tempo"
+                      aria-label={t('dock.animationTempo')}
                       className="kubi-slider w-full"
                     />
                   </label>
@@ -1286,7 +1290,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         className="w-3.5 h-3.5 shrink-0"
                         style={{ color: activePatternId !== 'solved' ? theme.ui.accent : theme.ui.muted }}
                       />
-                      <span>Sticker Pattern Templates</span>
+                      <span>{t('dock.patternTemplates')}</span>
                     </span>
                     {activePatternId !== 'solved' && (
                       <button
@@ -1302,7 +1306,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         }}
                       >
                         <RotateCcw className="w-3 h-3" />
-                        <span>Reset</span>
+                        <span>{t('dock.reset')}</span>
                       </button>
                     )}
                   </div>
@@ -1373,7 +1377,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   <div>
                     <div className="flex items-center justify-between gap-1.5 mb-2">
                       <span className="text-xs font-medium truncate" style={{ color: theme.ui.muted }}>
-                        Studio &amp; Custom Themes
+                        {t('dock.studioThemes')}
                       </span>
                       <div className="flex items-center gap-1 shrink-0">
                         <button
@@ -1403,7 +1407,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                           }}
                         >
                           <Palette className="w-3 h-3 shrink-0" />
-                          <span>Stickers</span>
+                          <span>{t('dock.stickers')}</span>
                         </button>
                       </div>
                     </div>
@@ -1451,7 +1455,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <span className="text-xs font-medium inline-flex items-center gap-1.5" style={{ color: theme.ui.muted }}>
                         <Headphones className="w-3.5 h-3.5" style={{ color: soundscape !== 'off' ? theme.ui.accent : theme.ui.muted }} />
-                        Ambient Soundscapes
+                        {t('dock.ambientSoundscapes')}
                       </span>
                       {soundscape !== 'off' && (
                         <div className="flex items-center gap-1.5">
@@ -1506,10 +1510,44 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   </div>
                 </div>
 
+                {/* UI Language Selector */}
+                <div
+                  className="pt-2.5 border-t flex items-center justify-between gap-2"
+                  style={{ borderColor: theme.ui.border }}
+                >
+                  <label
+                    htmlFor="lab-language-select"
+                    className="text-xs font-medium inline-flex items-center gap-1.5 shrink-0"
+                    style={{ color: theme.ui.muted }}
+                  >
+                    <Globe className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
+                    <span>{t('dock.language')}</span>
+                  </label>
+                  <select
+                    id="lab-language-select"
+                    data-testid="lab-language-select"
+                    value={locale}
+                    onChange={(e) => setLocale(e.target.value as SupportedLocale)}
+                    aria-label={t('dock.language')}
+                    className="h-8 px-2.5 rounded-lg border text-xs font-semibold outline-none cursor-pointer"
+                    style={{
+                      backgroundColor: theme.ui.surfaceSubtle,
+                      borderColor: theme.ui.border,
+                      color: theme.ui.text,
+                    }}
+                  >
+                    {SUPPORTED_LOCALES.map((item) => (
+                      <option key={item.code} value={item.code}>
+                        {item.nativeName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 {/* Compact Move Algorithms Strip */}
                 <div className="flex items-center gap-1.5 pt-2 border-t overflow-x-auto kubi-scroll-x" style={{ borderColor: theme.ui.border }}>
                   <span className="text-[11px] font-medium shrink-0 mr-1" style={{ color: theme.ui.muted }}>
-                    Algorithms
+                    {t('dock.algorithms')}
                   </span>
                   {presets.slice(0, 4).map((preset) => (
                     <button
@@ -1546,7 +1584,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                     type="text"
                     value={coachQuery}
                     onChange={(e) => setCoachQuery(e.target.value)}
-                    placeholder="Ask about algorithms, F2L intuition, parity, or your current cube..."
+                    placeholder={t('dock.coachPlaceholder')}
                     aria-label="Ask Solve Coach"
                     className="flex-1 h-10 px-3.5 rounded-xl border text-xs sm:text-sm outline-none"
                     style={{
@@ -1570,7 +1608,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                     ) : (
                       <Send className="w-3.5 h-3.5" />
                     )}
-                    <span>Ask</span>
+                    <span>{t('dock.ask')}</span>
                   </button>
                 </form>
 
@@ -1601,7 +1639,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                 {coachLoading && (
                   <div className="text-xs py-2 flex items-center gap-2" style={{ color: theme.ui.muted }}>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: theme.ui.accent }} />
-                    <span>Thinking through cube geometry and move theory...</span>
+                    <span>{t('dock.coachThinking')}</span>
                   </div>
                 )}
 

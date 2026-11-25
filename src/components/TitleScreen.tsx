@@ -1,9 +1,11 @@
 import React from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Globe } from 'lucide-react';
 import { PUZZLE_META } from '../cube/curriculum';
 import { buildInternalViewHref, type SeoViewId } from '../cube/seo';
 import { THEME_LIST } from '../cube/themes';
 import type { PuzzleType, ThemePalette } from '../cube/types';
+import { SUPPORTED_LOCALES, type SupportedLocale, type TranslationKey } from '../i18n/i18n';
+import { useI18n } from '../i18n/I18nContext';
 
 interface TitleScreenProps {
   theme: ThemePalette;
@@ -16,25 +18,25 @@ interface TitleScreenProps {
 
 const PUZZLES: PuzzleType[] = ['2x2', '3x3', '4x4', 'mirror'];
 
-const INTERNAL_SEO_LINKS: { view: SeoViewId; label: string; title: string }[] = [
+const INTERNAL_SEO_LINKS: { view: SeoViewId; labelKey: TranslationKey; title: string }[] = [
   {
     view: 'tutorials',
-    label: 'Cube Tutorials',
+    labelKey: 'title.tutorialsLink',
     title: "Interactive 3D Rubik's Cube tutorials (Beginner, CFOP, Roux, ZZ)",
   },
   {
     view: 'timer',
-    label: 'Speedcube Timer',
+    labelKey: 'title.timerLink',
     title: 'WCA speedcubing timer with Ao5 & Ao12 analytics',
   },
   {
     view: 'solver',
-    label: '3D Method Solver',
+    labelKey: 'title.solverLink',
     title: 'Multi-method CFOP, Roux, ZZ & Beginner 3D cube solver',
   },
   {
     view: 'daily',
-    label: 'Daily Scramble',
+    labelKey: 'title.dailyLink',
     title: "Daily UTC Rubik's Cube scramble challenge and leaderboard",
   },
 ];
@@ -47,6 +49,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   onStart,
   onNavigateView,
 }) => {
+  const { locale, setLocale, t } = useI18n();
   const activeMeta = PUZZLE_META[puzzleType];
 
   const handleLinkClick = (e: React.MouseEvent<HTMLAnchorElement>, view: SeoViewId) => {
@@ -59,8 +62,33 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
   return (
     <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between px-4 sm:px-8 lg:px-12 kubi-safe-top kubi-safe-bottom">
-      {/* Top minimal theme swatches — right aligned, zero navbar chrome */}
-      <div className="flex items-center justify-end pointer-events-none">
+      {/* Top minimal language + theme swatches — right aligned, zero navbar chrome */}
+      <div className="flex items-center justify-end gap-2 pointer-events-none flex-wrap">
+        <label
+          className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-2 rounded-xl border"
+          style={{
+            backgroundColor: theme.ui.surface,
+            borderColor: theme.ui.border,
+            boxShadow: theme.ui.shadow,
+          }}
+        >
+          <Globe className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} aria-hidden="true" />
+          <select
+            data-testid="title-language-select"
+            aria-label={t('settings.language')}
+            value={locale}
+            onChange={(e) => setLocale(e.target.value as SupportedLocale)}
+            className="bg-transparent text-xs font-semibold outline-none cursor-pointer"
+            style={{ color: theme.ui.text }}
+          >
+            {SUPPORTED_LOCALES.map((loc) => (
+              <option key={loc.code} value={loc.code} style={{ color: '#111827', backgroundColor: '#FFFFFF' }}>
+                {loc.nativeName}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <div
           className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl border"
           style={{
@@ -70,27 +98,27 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           }}
         >
           <span className="text-xs font-medium pr-1" style={{ color: theme.ui.muted }}>
-            Theme
+            {t('title.theme')}
           </span>
-          {THEME_LIST.map((t) => {
-            const active = t.id === theme.id;
+          {THEME_LIST.map((tItem) => {
+            const active = tItem.id === theme.id;
             return (
               <button
-                key={t.id}
+                key={tItem.id}
                 type="button"
-                onClick={() => onSelectTheme(t.id)}
-                aria-label={`Select ${t.name} theme`}
+                onClick={() => onSelectTheme(tItem.id)}
+                aria-label={`Select ${tItem.name} theme`}
                 aria-pressed={active}
-                title={t.name}
+                title={tItem.name}
                 className="w-7 h-7 rounded-lg flex items-center justify-center transition-transform duration-150 hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-2"
                 style={{
-                  backgroundColor: t.ui.swatchPreview[0],
+                  backgroundColor: tItem.ui.swatchPreview[0],
                   border: active ? `2px solid ${theme.ui.accent}` : `1px solid ${theme.ui.border}`,
                 }}
               >
                 <span
                   className="w-2.5 h-2.5 rounded-full"
-                  style={{ backgroundColor: t.ui.swatchPreview[2] }}
+                  style={{ backgroundColor: tItem.ui.swatchPreview[2] }}
                 />
               </button>
             );
@@ -160,7 +188,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 Kubi Studio
               </h1>
               <p className="text-xs sm:text-sm mt-1" style={{ color: theme.ui.muted }}>
-                3D Rubik&apos;s Cube Tutorials, Solver &amp; Timer
+                {t('title.subtitle')}
               </p>
             </div>
           </div>
@@ -169,15 +197,14 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             className="text-sm sm:text-[15px] leading-relaxed mb-5"
             style={{ color: theme.ui.muted }}
           >
-            Practice speedcubing on 2×2, 3×3, 4×4, and Mirror cubes with Beginner, CFOP, Roux, and
-            ZZ tutorials, a WCA timer, and live 3D move tracking.
+            {t('title.description')}
           </p>
 
           {/* Interactive Puzzle Preview Selector */}
           <div className="mb-5">
             <div className="flex items-center justify-between text-xs mb-2">
               <span className="font-medium" style={{ color: theme.ui.text }}>
-                Select Puzzle
+                {t('title.selectPuzzle')}
               </span>
               <span style={{ color: theme.ui.muted }}>
                 {activeMeta.difficulty} · {activeMeta.pieces}
@@ -224,7 +251,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               boxShadow: '0 8px 20px rgba(0, 0, 0, 0.14)',
             }}
           >
-            <span>Start Studio</span>
+            <span>{t('title.startStudio')}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
 
@@ -241,7 +268,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               className="col-span-2 text-xs font-semibold py-1 rounded-md transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 truncate"
               style={{ color: theme.ui.accent }}
             >
-              1v1 Live Competition Arena (Video &amp; Audio) →
+              {t('title.arenaLink')} →
             </a>
             {INTERNAL_SEO_LINKS.map((item) => (
               <a
@@ -252,7 +279,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 className="text-xs font-medium py-1 rounded-md transition-colors hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 truncate"
                 style={{ color: theme.ui.muted }}
               >
-                {item.label} →
+                {t(item.labelKey)} →
               </a>
             ))}
           </nav>
@@ -265,10 +292,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           className="text-[11px] sm:text-xs tracking-wide font-medium"
           style={{ color: theme.ui.muted }}
         >
-          <span className="lg:hidden">Swipe Cube to Turn · Drag Space to Orbit · Pinch to Zoom</span>
-          <span className="hidden lg:inline">
-            Drag Cube to Turn · Drag Space to Orbit · U D L R F B Keys · Enter to Start
-          </span>
+          <span className="lg:hidden">{t('title.hintMobile')}</span>
+          <span className="hidden lg:inline">{t('title.hintDesktop')}</span>
         </p>
       </div>
     </div>
