@@ -6,6 +6,7 @@ import { CompactNotationBar } from './components/CompactNotationBar';
 import { PauseModal, VictoryModal } from './components/Modals';
 import { PaletteStudioModal } from './components/PaletteStudioModal';
 import { ShortcutsHelpOverlay } from './components/ShortcutsHelpOverlay';
+import { SmartHintModal } from './components/SmartHintModal';
 import { TimerDashboardModal, type TimerDashboardTab } from './components/TimerDashboardModal';
 import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
@@ -74,6 +75,7 @@ import {
 import type {
   AmbientSoundscapeId,
   CubeMove,
+  CubieState,
   DockTab,
   GameState,
   LessonStep,
@@ -178,6 +180,7 @@ export default function App() {
   const [arenaInviteRoomCode, setArenaInviteRoomCode] = useState<string | null>(
     () => initialSeoRoute.roomCode ?? null
   );
+  const [smartHintOpen, setSmartHintOpen] = useState<boolean>(false);
   const [solveRecords, setSolveRecords] = useState<SolveRecord[]>(() => loadSolveRecords());
   const [activeDailyDateKey, setActiveDailyDateKey] = useState<string | null>(null);
 
@@ -213,6 +216,7 @@ export default function App() {
   const activeDailyRef = useRef<{ dateKey: string; puzzleType: PuzzleType; scramble: string } | null>(null);
   const timerModalOpenRef = useRef<boolean>(false);
   const arenaOpenRef = useRef<boolean>(false);
+  const smartHintOpenRef = useRef<boolean>(false);
   const paletteStudioOpenRef = useRef<boolean>(false);
   const shortcutsOpenRef = useRef<boolean>(false);
   const puzzleRef = useRef<PuzzleType>(puzzleType);
@@ -234,6 +238,7 @@ export default function App() {
   playTrackerLabelRef.current = playTrackerLabel;
   timerModalOpenRef.current = timerModalTab !== null;
   arenaOpenRef.current = arenaOpen;
+  smartHintOpenRef.current = smartHintOpen;
   paletteStudioOpenRef.current = paletteStudioOpen;
   shortcutsOpenRef.current = shortcutsOpen;
 
@@ -1443,11 +1448,57 @@ export default function App() {
     });
   }, []);
 
+  const handleSyncScannedCubeToStudio = useCallback(
+    (cubies: CubieState[], moves: string[], methodLabel: string) => {
+      const engine = engineRef.current;
+      if (!engine) return;
+      cubeAudio.playUiTick();
+      setSmartHintOpen(false);
+      setTimerModalTab(null);
+      setArenaOpen(false);
+      setVictorySnapshot(null);
+      setGameState('playing');
+      setPuzzleType('3x3');
+      puzzleRef.current = '3x3';
+      setActiveTab('play');
+      activeTabRef.current = 'play';
+      setDockCollapsed(false);
+
+      resetProgressTrackers();
+      engine.loadCubieStates(cubies, false);
+      setIsSolved(moves.length === 0);
+      hasScrambledRef.current = moves.length > 0;
+      setHasScrambled(moves.length > 0);
+
+      if (moves.length > 0) {
+        const nextTracker = createSequenceTracker(moves);
+        playTrackerRef.current = nextTracker;
+        setPlayTracker(nextTracker);
+        playTrackerLabelRef.current = methodLabel;
+        setPlayTrackerLabel(methodLabel);
+
+        const firstMove = parseNotation(moves[0], '3x3');
+        setHintMove(firstMove);
+        engine.showGuideArrow(firstMove);
+      } else {
+        setHintMove(null);
+        engine.clearGuideArrow();
+      }
+    },
+    [resetProgressTrackers]
+  );
+
   // Global Keyboard Shortcuts (WCA faces U/D/L/R/F/B, center slices M/E/S, cube rotations x/y/z,
   // Shift for prime ', Enter/Space title start, Esc/P pause, V mute, H HUD, Ctrl+Z/Backspace undo, T stopwatch)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (timerModalOpenRef.current || arenaOpenRef.current || paletteStudioOpenRef.current) return;
+      if (
+        timerModalOpenRef.current ||
+        arenaOpenRef.current ||
+        smartHintOpenRef.current ||
+        paletteStudioOpenRef.current
+      )
+        return;
 
       const target = e.target as HTMLElement | null;
       const isTyping =
@@ -1567,6 +1618,11 @@ export default function App() {
             cubeAudio.playUiTick();
             setTimerModalTab(null);
             setArenaOpen(true);
+          }}
+          onOpenSmartHint={() => {
+            cubeAudio.playUiTick();
+            setTimerModalTab(null);
+            setSmartHintOpen(true);
           }}
           onExportSnapshot={handleExportSnapshot}
           onResetCamera={() => engineRef.current?.resetCamera()}
@@ -1716,6 +1772,11 @@ export default function App() {
             onScramble={handleScramble}
             onUndo={handleUndo}
             onHint={handleHint}
+            onOpenSmartHint={() => {
+              cubeAudio.playUiTick();
+              setTimerModalTab(null);
+              setSmartHintOpen(true);
+            }}
             onStepSolveMove={handleStepSolveMove}
             onAutoSolve={handleAutoSolve}
             onPauseAutoSolve={handlePauseAutoSolve}
@@ -1866,6 +1927,15 @@ export default function App() {
             setArenaOpen(false);
             setArenaInviteRoomCode(null);
           }}
+        />
+      )}
+
+      {/* Smart Hint Physical Rubik's Cube Camera Scanner & Multi-Algorithm Next-Move Advisor */}
+      {smartHintOpen && (
+        <SmartHintModal
+          theme={theme}
+          onClose={() => setSmartHintOpen(false)}
+          onSyncToStudio={handleSyncScannedCubeToStudio}
         />
       )}
     </main>

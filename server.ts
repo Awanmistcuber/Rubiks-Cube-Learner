@@ -7,7 +7,8 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import Cube from 'cubejs';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import {
   ArenaEngine,
   VALID_ARENA_PENALTIES,
@@ -76,7 +77,7 @@ function saveDailyStore(entries: DailyLeaderboardEntry[]): void {
 async function createServer() {
   const app = express();
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '4mb' }));
 
   // Explicit origin-checked CORS + noindex header for cross-origin static frontends (e.g. GitHub Pages -> Render)
   app.use('/api', (req, res, next) => {
@@ -372,6 +373,184 @@ async function createServer() {
       res.json({ answer });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unable to reach Solve Coach right now.';
+      const status =
+        message.includes('API_KEY_INVALID') || message.includes('400')
+          ? 400
+          : message.includes('PERMISSION_DENIED') || message.includes('403')
+            ? 403
+            : message.includes('RESOURCE_EXHAUSTED') || message.includes('429')
+              ? 429
+              : 500;
+      res.status(status).json({ error: message });
+    }
+  });
+
+  // Lazy Kociemba Two-Phase pruning-table initializer (fast ~2-3s once, <15ms per solve thereafter)
+  let kociembaReady = false;
+  const ensureKociembaReady = () => {
+    if (!kociembaReady) {
+      Cube.initSolver();
+      kociembaReady = true;
+    }
+  };
+
+  const SOLVED_FACELETS = 'UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB';
+  const VALID_WCA_FACES = new Set(['U', 'R', 'F', 'D', 'L', 'B']);
+
+  // Kociemba Two-Phase Optimal Solver endpoint for physical scanned 3x3 cubes
+  app.post('/api/smart-hint/solve', (req, res) => {
+    try {
+      const rawFacelets = typeof req.body?.facelets === 'string' ? req.body.facelets.trim().toUpperCase() : '';
+      if (!/^[URFDLB]{54}$/.test(rawFacelets)) {
+        res.status(400).json({
+          error: 'Invalid cube state. Expected 54 WCA facelets (U, R, F, D, L, B).',
+        });
+        return;
+      }
+
+      if (rawFacelets === SOLVED_FACELETS) {
+        res.json({
+          algorithm: 'kociemba',
+          moves: [],
+          moveCount: 0,
+          nextMove: null,
+          solveTimeMs: 0,
+        });
+        return;
+      }
+
+      const startMs = Date.now();
+      ensureKociembaReady();
+      const cube = Cube.fromString(rawFacelets);
+      const solutionStr = cube.solve().trim();
+      const moves = solutionStr ? solutionStr.split(/\s+/).filter(Boolean) : [];
+      const solveTimeMs = Date.now() - startMs;
+
+      res.json({
+        algorithm: 'kociemba',
+        moves,
+        moveCount: moves.length,
+        nextMove: moves[0] ?? null,
+        solveTimeMs,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unable to solve scanned cube state.';
+      res.status(400).json({
+        error: `Scanned cube could not be solved by Kociemba Two-Phase: ${msg}`,
+      });
+    }
+  });
+
+  // Server-side Gemini Vision 3x3 face sticker reader for glare / challenging lighting
+  app.post('/api/smart-hint/scan-face', async (req, res) => {
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+        res.status(503).json({
+          error:
+            'AI Vision Face Reader requires a Gemini API key in Settings > Secrets. You can still use real-time instant camera color sampling offline.',
+        });
+        return;
+      }
+
+      const { imageBase64, mimeType, expectedCenter } = req.body ?? {};
+      if (typeof imageBase64 !== 'string' || imageBase64.length < 100 || imageBase64.length > 3_500_000) {
+        res.status(400).json({ error: 'Missing or invalid cube face image data.' });
+        return;
+      }
+
+      const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
+      const safeMime =
+        mimeType === 'image/png' || mimeType === 'image/webp' ? mimeType : 'image/jpeg';
+      const centerHint =
+        typeof expectedCenter === 'string' && VALID_WCA_FACES.has(expectedCenter.toUpperCase())
+          ? expectedCenter.toUpperCase()
+          : null;
+
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const prompt = [
+        'Inspect this cropped photo of a single 3x3 Rubik\'s Cube face centered in the frame.',
+        'Identify the 9 sticker colors in row-major order from top-left to bottom-right:',
+        '[top-left, top-center, top-right, mid-left, center, mid-right, bottom-left, bottom-center, bottom-right].',
+        'Map each sticker strictly to its WCA standard color letter:',
+        'U = White, R = Red, F = Green, D = Yellow, L = Orange, B = Blue.',
+        centerHint
+          ? `The user is scanning the face whose center sticker (index 4) is ${centerHint}. Account for warm/cool lighting, shadows, and plastic glare when distinguishing Red (R) vs Orange (L) and White (U) vs Yellow (D).`
+          : 'Account for warm/cool lighting, shadows, and plastic glare when distinguishing Red (R) vs Orange (L) and White (U) vs Yellow (D).',
+      ].join(' ');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: [
+          {
+            inlineData: {
+              mimeType: safeMime,
+              data: cleanBase64,
+            },
+          },
+          { text: prompt },
+        ],
+        config: {
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW,
+          },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              stickers: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Exactly 9 WCA face letters (U, R, F, D, L, B) in row-major order.',
+              },
+              confidence: {
+                type: Type.STRING,
+                description: 'Confidence level: high, medium, or low.',
+              },
+            },
+            required: ['stickers', 'confidence'],
+          },
+        },
+      });
+
+      const rawText = response.text?.trim();
+      if (!rawText) {
+        res.status(502).json({ error: 'AI Vision returned an empty response. Try again with better lighting.' });
+        return;
+      }
+
+      const parsed = JSON.parse(rawText) as { stickers?: unknown; confidence?: unknown };
+      if (!Array.isArray(parsed.stickers) || parsed.stickers.length !== 9) {
+        res.status(502).json({ error: 'AI Vision could not detect a clean 3×3 sticker grid. Center the face and retry.' });
+        return;
+      }
+
+      const stickers = parsed.stickers.map((s) => String(s).trim().toUpperCase());
+      if (!stickers.every((ch) => VALID_WCA_FACES.has(ch))) {
+        res.status(502).json({ error: 'AI Vision returned unrecognized sticker colors. Retry with steadier lighting.' });
+        return;
+      }
+
+      if (centerHint) {
+        stickers[4] = centerHint;
+      }
+
+      const confidence =
+        typeof parsed.confidence === 'string' && ['high', 'medium', 'low'].includes(parsed.confidence.toLowerCase())
+          ? parsed.confidence.toLowerCase()
+          : 'medium';
+
+      res.json({ stickers, confidence });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unable to scan face with AI Vision right now.';
       const status =
         message.includes('API_KEY_INVALID') || message.includes('400')
           ? 400
@@ -758,6 +937,14 @@ async function createServer() {
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Kubi Studio running on http://0.0.0.0:${PORT}`);
+    // Pre-warm Kociemba pruning tables asynchronously after boot so first Smart Hint solve is instant
+    setTimeout(() => {
+      try {
+        ensureKociembaReady();
+      } catch {
+        // Will retry lazily on first /api/smart-hint/solve request
+      }
+    }, 2000);
   });
 }
 

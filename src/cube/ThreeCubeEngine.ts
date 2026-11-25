@@ -745,6 +745,66 @@ export class ThreeCubeEngine {
   }
 
   /**
+   * Loads an arbitrary validated 3x3 CubieState[] (e.g., from the physical Smart Hint camera scanner)
+   * directly onto the 3D stage with exact sticker colors and cubie coordinates.
+   */
+  public loadCubieStates(states: CubieState[], animateMorph = true) {
+    this.clearCubeMeshes();
+    this.puzzleType = '3x3';
+    this.cubieStates = states.map((c) => ({
+      ...c,
+      home: [...c.home],
+      pos: [...c.pos],
+      stickers: { ...c.stickers },
+      dimensions: [...c.dimensions],
+      homeCenter: [...c.pos],
+      rotMatrix: [...c.rotMatrix],
+    }));
+    this.clearGuideArrow();
+
+    const size = getPuzzleSize('3x3');
+    const unitScale = 2.75 / size;
+    this.coreGroup.scale.setScalar(0.85);
+
+    for (let i = 0; i < this.cubieStates.length; i++) {
+      const cubie = this.cubieStates[i];
+      const group = this.buildCubieGroup(cubie, unitScale, false);
+      const basePos = new THREE.Vector3(
+        cubie.pos[0] * unitScale,
+        cubie.pos[1] * unitScale,
+        cubie.pos[2] * unitScale
+      );
+      group.position.copy(basePos);
+      this.cubeRoot.add(group);
+
+      const explodeDir = basePos.clone();
+      if (explodeDir.lengthSq() < 0.001) explodeDir.set(0, 1, 0);
+      else explodeDir.normalize();
+
+      this.cubieVisuals.set(cubie.id, {
+        id: cubie.id,
+        group,
+        homePos: basePos.clone(),
+        currentGrid: [...cubie.pos],
+        explodeDir,
+        morphDelay: (i % 9) * 0.035,
+        baseLocalPos: basePos.clone(),
+      });
+    }
+
+    if (animateMorph) {
+      this.morphProgress = 1.0;
+      this.emitBurst(new THREE.Vector3(0, 0, 0), 22, 2.8);
+      cubeAudio.playMorphWhoosh(this.getCubeWorldCoords());
+    } else {
+      this.morphProgress = 0;
+      this.ringPulse = 0.85;
+      cubeAudio.playMorphWhoosh(this.getCubeWorldCoords());
+    }
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
    * Switches between built-in Figma themes and custom user sticker palettes in real time.
    */
   public applyTheme(themeOrId: ThemePalette | ThemeId) {
@@ -996,6 +1056,7 @@ export class ThreeCubeEngine {
     }
 
     this.guideArrowGroup.visible = true;
+    this.renderer.render(this.scene, this.camera);
   }
 
   public clearGuideArrow() {

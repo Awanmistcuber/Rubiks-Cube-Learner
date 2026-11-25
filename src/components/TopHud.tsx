@@ -7,6 +7,7 @@ import {
   PanelRightOpen,
   Pause,
   RotateCcw,
+  ScanLine,
   Swords,
   Timer,
   Volume2,
@@ -31,6 +32,7 @@ interface TopHudProps {
   onOpenStopwatch: () => void;
   onOpenDashboard: () => void;
   onOpenArena: () => void;
+  onOpenSmartHint: () => void;
   onExportSnapshot: () => void;
   onResetCamera: () => void;
   onToggleMute: () => void;
@@ -64,6 +66,7 @@ export const TopHud: React.FC<TopHudProps> = ({
   onOpenStopwatch,
   onOpenDashboard,
   onOpenArena,
+  onOpenSmartHint,
   onExportSnapshot,
   onResetCamera,
   onToggleMute,
@@ -174,6 +177,26 @@ export const TopHud: React.FC<TopHudProps> = ({
 
         {/* Mobile Compact Right Utility Icons (Row 1) */}
         <div className="flex sm:hidden items-center gap-1 shrink-0">
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="hud-open-smart-hint-mobile-btn"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenSmartHint();
+            }}
+            aria-label="Open Smart Hint Physical Cube Scanner"
+            title="Smart Hint Camera Scanner"
+            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            style={{
+              backgroundColor: theme.ui.accentSoft,
+              borderColor: theme.ui.accent,
+              color: theme.ui.accent,
+            }}
+          >
+            <ScanLine className="w-4 h-4" />
+          </button>
+
           <button
             type="button"
             tabIndex={-1}
@@ -415,6 +438,26 @@ export const TopHud: React.FC<TopHudProps> = ({
           >
             <BarChart3 className="w-3.5 h-3.5 shrink-0" />
             <span className="hidden lg:inline">{t('hud.stats')}</span>
+          </button>
+
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="hud-open-smart-hint-btn"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenSmartHint();
+            }}
+            aria-label="Open Smart Hint Physical Cube Scanner"
+            title="Scan physical cube with camera for Kociemba Optimal & basic hints"
+            className="h-8 px-2 lg:px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            style={{
+              backgroundColor: theme.ui.surface,
+              color: theme.ui.accent,
+            }}
+          >
+            <ScanLine className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden lg:inline">{t('hud.smartHint')}</span>
           </button>
 
           <button

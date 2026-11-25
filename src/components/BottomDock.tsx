@@ -21,6 +21,7 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  ScanLine,
   Send,
   Shuffle,
   SlidersHorizontal,
@@ -92,6 +93,7 @@ interface BottomDockProps {
   onScramble: () => void;
   onUndo: () => void;
   onHint: () => void;
+  onOpenSmartHint: () => void;
   onStepSolveMove: () => void;
   onAutoSolve: () => void;
   onPauseAutoSolve: () => void;
@@ -160,6 +162,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onScramble,
   onUndo,
   onHint,
+  onOpenSmartHint,
   onStepSolveMove,
   onAutoSolve,
   onPauseAutoSolve,
@@ -459,6 +462,23 @@ export const BottomDock: React.FC<BottomDockProps> = ({
               >
                 <Compass className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
                 <span>{t('dock.hint')}</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="dock-open-smart-hint-btn"
+                onClick={onOpenSmartHint}
+                aria-label="Scan physical cube with camera for Smart Hint"
+                title="Scan physical 3×3 cube via camera (Kociemba + basic hints)"
+                className="h-9 px-2.5 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1 transition-colors duration-150 cursor-pointer whitespace-nowrap"
+                style={{
+                  backgroundColor: theme.ui.accentSoft,
+                  borderColor: theme.ui.accent,
+                  color: theme.ui.accent,
+                }}
+              >
+                <ScanLine className="w-3.5 h-3.5 shrink-0" />
+                <span>{t('dock.scanCube')}</span>
               </button>
 
               <button
