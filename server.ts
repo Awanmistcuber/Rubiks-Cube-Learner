@@ -17,6 +17,7 @@ import {
   type ArenaRoomSnapshot,
   type ArenaServerMessage,
 } from './src/cube/arenaEngine.ts';
+import { isOriginAllowed, parseAllowedOrigins } from './src/cube/backendConfig.ts';
 import {
   generateDailyScramble,
   getNextUtcMidnightMs,
@@ -33,6 +34,8 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const isProd = process.env.NODE_ENV === 'production';
+const isBackendOnly = process.env.BACKEND_ONLY === 'true';
+const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 
 const VALID_PUZZLES = new Set<PuzzleType>(['2x2', '3x3', '4x4', 'mirror']);
 const VALID_PENALTIES = new Set<SolvePenalty>(['none', '+2', 'dnf']);
@@ -72,11 +75,38 @@ function saveDailyStore(entries: DailyLeaderboardEntry[]): void {
 
 async function createServer() {
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '1mb' }));
 
-  // Prevent search crawlers from indexing raw JSON API endpoints
-  app.use('/api', (_req, res, next) => {
+  // Explicit origin-checked CORS + noindex header for cross-origin static frontends (e.g. GitHub Pages -> Render)
+  app.use('/api', (req, res, next) => {
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+    const requestHost =
+      (typeof req.headers['x-forwarded-host'] === 'string' && req.headers['x-forwarded-host']) ||
+      req.headers.host;
+
+    if (origin) {
+      if (!isOriginAllowed(origin, allowedOrigins, requestHost)) {
+        if (req.method === 'OPTIONS') {
+          res.status(403).end();
+          return;
+        }
+        res.status(403).json({ error: 'Origin not allowed.' });
+        return;
+      }
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+
     next();
   });
 
@@ -99,6 +129,17 @@ async function createServer() {
   const arenaEngine = new ArenaEngine();
   const arenaSockets = new Map<string, WebSocket>();
   const arenaQueuedPuzzle = new Map<string, PuzzleType>();
+
+  // Render health check & cold-start wake-up endpoint
+  app.get('/api/health', (_req, res) => {
+    res.json({
+      ok: true,
+      service: 'kubi-studio-arena',
+      activeRooms: arenaEngine.getActiveRoomCount(),
+      queueCounts: arenaEngine.getQueueCounts(),
+      serverTimeMs: Date.now(),
+    });
+  });
 
   app.get('/api/arena/status', (_req, res) => {
     res.json({
@@ -343,7 +384,18 @@ async function createServer() {
     }
   });
 
-  if (!isProd) {
+  if (isBackendOnly) {
+    // Standalone Render WebSocket + API deployment (static frontend served on GitHub Pages)
+    app.get('/', (_req, res) => {
+      res.json({
+        ok: true,
+        service: 'kubi-studio-arena',
+        mode: 'backend-only',
+        wsPath: '/ws/arena',
+        healthPath: '/api/health',
+      });
+    });
+  } else if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
@@ -407,6 +459,18 @@ async function createServer() {
 
   httpServer.on('upgrade', (request, socket, head) => {
     try {
+      const origin = typeof request.headers.origin === 'string' ? request.headers.origin : undefined;
+      const requestHost =
+        (typeof request.headers['x-forwarded-host'] === 'string' &&
+          request.headers['x-forwarded-host']) ||
+        request.headers.host;
+
+      if (!isOriginAllowed(origin, allowedOrigins, requestHost)) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
       const reqUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
       if (
         reqUrl.pathname === '/ws/arena' ||

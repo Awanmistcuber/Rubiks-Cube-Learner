@@ -1,0 +1,20 @@
+# Render Blueprint for Kubi Studio Real-Time WebSocket & API Backend
+# Deploy free on Render: https://dashboard.render.com/blueprints
+services:
+  - type: web
+    name: kubi-studio-arena
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci --include=dev
+    startCommand: npm run start:backend
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BACKEND_ONLY
+        value: "true"
+      - key: ALLOWED_ORIGINS
+        value: https://awanmistcuber.github.io
+      - key: GEMINI_API_KEY
+        sync: false

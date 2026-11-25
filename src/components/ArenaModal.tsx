@@ -665,9 +665,13 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
   const connectionLabel =
     arena.connectionState === 'connected'
       ? 'Server Connected'
-      : arena.connectionState === 'reconnecting'
-        ? 'Reconnecting...'
-        : 'Connecting...';
+      : arena.connectionState === 'waking'
+        ? 'Waking Server (~30s)...'
+        : arena.connectionState === 'offline'
+          ? 'Backend Not Configured'
+          : arena.connectionState === 'reconnecting'
+            ? 'Reconnecting...'
+            : 'Connecting...';
 
   return (
     <div
@@ -695,7 +699,13 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
             className="hidden sm:inline text-xs font-medium whitespace-nowrap"
             style={{
               color:
-                arena.connectionState === 'connected' ? '#16A34A' : theme.ui.muted,
+                arena.connectionState === 'connected'
+                  ? '#16A34A'
+                  : arena.connectionState === 'offline'
+                    ? '#DC2626'
+                    : arena.connectionState === 'waking'
+                      ? '#D97706'
+                      : theme.ui.muted,
             }}
             data-testid="arena-connection-status"
           >

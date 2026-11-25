@@ -6,8 +6,14 @@ import type {
 } from './arenaEngine';
 import type { SolvePenalty } from './timerStats';
 import type { PuzzleType } from './types';
+import { getBackendConfig } from './backendConfig';
 
-export type ArenaConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'offline';
+export type ArenaConnectionState =
+  | 'connecting'
+  | 'waking'
+  | 'connected'
+  | 'reconnecting'
+  | 'offline';
 export type WebRtcStatus = 'idle' | 'connecting' | 'connected' | 'fallback';
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -22,11 +28,7 @@ const FALLBACK_FRAME_WIDTH = 320;
 const FALLBACK_FRAME_HEIGHT = 180;
 const FALLBACK_FRAME_QUALITY = 0.55;
 const FALLBACK_FRAME_MAX_BYTES = 46000;
-
-function buildArenaWsUrl(): string {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws/arena`;
-}
+const WS_KEEPALIVE_INTERVAL_MS = 25000;
 
 export interface UseArenaClientResult {
   connectionState: ArenaConnectionState;
@@ -643,18 +645,80 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     }
 
     let disposed = false;
+    let keepAliveTimer: number | null = null;
+    let wakeHintTimer: number | null = null;
+    const backend = getBackendConfig();
+
+    const clearSocketTimers = () => {
+      if (keepAliveTimer !== null) {
+        window.clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+      }
+      if (wakeHintTimer !== null) {
+        window.clearTimeout(wakeHintTimer);
+        wakeHintTimer = null;
+      }
+    };
+
+    if (backend.needsExternalBackend || !backend.arenaWsUrl) {
+      setConnectionState('offline');
+      setErrorMessage(
+        'GitHub Pages hosts static files only. Deploy the included Render WebSocket backend (render.yaml) and set VITE_BACKEND_URL in GitHub Repository Variables to enable live 1v1 matches.'
+      );
+      initMedia();
+      return () => {
+        disposed = true;
+        closePeerConnection();
+        stopLocalMedia();
+      };
+    }
+
+    const wsUrl = backend.arenaWsUrl;
+
+    // Warm up free-tier Render instance via /api/health so cold starts wake immediately
+    if (backend.isExternalBackend && backend.healthUrl) {
+      fetch(backend.healthUrl, { mode: 'cors', cache: 'no-store' }).catch(() => {});
+    }
 
     const connect = () => {
       if (disposed) return;
-      setConnectionState(reconnectAttemptRef.current > 0 ? 'reconnecting' : 'connecting');
+      clearSocketTimers();
+      setConnectionState(
+        reconnectAttemptRef.current > 0
+          ? backend.isExternalBackend && reconnectAttemptRef.current <= 3
+            ? 'waking'
+            : 'reconnecting'
+          : 'connecting'
+      );
 
-      const ws = new WebSocket(buildArenaWsUrl());
+      if (backend.isExternalBackend) {
+        wakeHintTimer = window.setTimeout(() => {
+          if (!disposed && wsRef.current?.readyState !== WebSocket.OPEN) {
+            setConnectionState('waking');
+          }
+        }, 2200);
+      }
+
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         if (disposed) return;
+        clearSocketTimers();
         reconnectAttemptRef.current = 0;
         setConnectionState('connected');
+        setErrorMessage(null);
+
+        // Keep WebSocket warm across reverse proxies (Render / Cloudflare / Cloud Run)
+        keepAliveTimer = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            try {
+              ws.send(JSON.stringify({ type: 'ping' }));
+            } catch {
+              // ignore transient ping error
+            }
+          }
+        }, WS_KEEPALIVE_INTERVAL_MS);
       };
 
       ws.onmessage = (event) => {
@@ -745,8 +809,11 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
 
       ws.onclose = () => {
         if (disposed) return;
+        clearSocketTimers();
         wsRef.current = null;
-        setConnectionState('reconnecting');
+        const nextState: ArenaConnectionState =
+          backend.isExternalBackend && reconnectAttemptRef.current < 3 ? 'waking' : 'reconnecting';
+        setConnectionState(nextState);
         const delay = Math.min(8000, 1000 * Math.pow(2, reconnectAttemptRef.current));
         reconnectAttemptRef.current += 1;
         reconnectTimerRef.current = window.setTimeout(connect, delay);
@@ -754,7 +821,9 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
 
       ws.onerror = () => {
         if (disposed) return;
-        setConnectionState('reconnecting');
+        setConnectionState(
+          backend.isExternalBackend && reconnectAttemptRef.current < 3 ? 'waking' : 'reconnecting'
+        );
       };
     };
 
@@ -764,6 +833,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
 
     return () => {
       disposed = true;
+      clearSocketTimers();
       if (reconnectTimerRef.current !== null) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;

@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { cubeAudio } from '../cube/audio';
+import { buildApiUrl } from '../cube/backendConfig';
 import type { BackupImportMode } from '../cube/backup';
 import { PUZZLE_META } from '../cube/curriculum';
 import {
@@ -154,7 +155,9 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
     const localEntries = loadLocalDailyEntries();
     try {
       const res = await fetch(
-        `/api/daily-challenge?puzzle=${encodeURIComponent(puzzleType)}&clientId=${encodeURIComponent(clientId)}`
+        buildApiUrl(
+          `/api/daily-challenge?puzzle=${encodeURIComponent(puzzleType)}&clientId=${encodeURIComponent(clientId)}`
+        )
       );
       if (!res.ok) throw new Error('Unable to load Daily Challenge leaderboard.');
       const json = (await res.json()) as DailyChallengeResponse;
@@ -214,7 +217,7 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
       };
 
       try {
-        const res = await fetch('/api/daily-challenge/submit', {
+        const res = await fetch(buildApiUrl('/api/daily-challenge/submit'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -275,8 +278,10 @@ export const TimerDashboardModal: React.FC<TimerDashboardModalProps> = ({
     async (entryId: string, patch: { penalty?: SolvePenalty; playerName?: string }) => {
       patchLocalDailyEntry(entryId, patch);
       try {
-        const res = await fetch(`/api/daily-challenge/entry/${encodeURIComponent(entryId)}`, {
-          method: 'PATCH',
+        const res = await fetch(
+          buildApiUrl(`/api/daily-challenge/entry/${encodeURIComponent(entryId)}`),
+          {
+            method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             clientId,

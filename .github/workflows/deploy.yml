@@ -30,6 +30,9 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          VITE_BACKEND_URL: ${{ vars.VITE_BACKEND_URL }}
+          VITE_ARENA_WS_URL: ${{ vars.VITE_ARENA_WS_URL }}
         run: npm run build
 
       - name: Upload artifact

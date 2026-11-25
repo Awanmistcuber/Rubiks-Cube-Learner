@@ -11,6 +11,10 @@ import {
   isCubeSolved,
   parseNotation,
 } from './cubeLogic';
+import {
+  applyPatternToCubieStates,
+  type StickerPatternId,
+} from './patternTemplates';
 import { computeSnapshotDimensions } from './snapshot';
 import { THEMES } from './themes';
 import type {
@@ -55,6 +59,7 @@ interface ParticleSlot {
 interface CubieVisual {
   id: number;
   group: THREE.Group;
+  stickerMeshes: Partial<Record<FaceKey, THREE.Mesh>>;
   homePos: THREE.Vector3;
   currentGrid: [number, number, number];
   /** Radial direction used for Exploded View and Morph Assembly */
@@ -220,6 +225,7 @@ export class ThreeCubeEngine {
 
   // State
   private puzzleType: PuzzleType = '3x3';
+  private activePatternId: StickerPatternId = 'solved';
   private activePalette: ThemePalette = THEMES.atelier;
   private gameState: GameState = 'title';
   private cubieStates: CubieState[] = [];
@@ -558,8 +564,13 @@ export class ThreeCubeEngine {
   /**
    * Builds a composite multi-part cubie (rounded beveled chassis + internal metallic collar + raised beveled clearcoat tiles).
    */
-  private buildCubieGroup(cubie: CubieState, unitScale: number, isMirror: boolean): THREE.Group {
+  private buildCubieGroup(
+    cubie: CubieState,
+    unitScale: number,
+    isMirror: boolean
+  ): { group: THREE.Group; stickerMeshes: Partial<Record<FaceKey, THREE.Mesh>> } {
     const group = new THREE.Group();
+    const stickerMeshes: Partial<Record<FaceKey, THREE.Mesh>> = {};
     group.userData.cubieId = cubie.id;
 
     const gap = isMirror ? 0.042 : 0.048;
@@ -648,7 +659,9 @@ export class ThreeCubeEngine {
       tileMesh.position.copy(offset);
       tileMesh.rotation.copy(rot);
       tileMesh.userData.cubieId = cubie.id;
+      tileMesh.userData.stickerFace = face;
       group.add(tileMesh);
+      stickerMeshes[face] = tileMesh;
       this.pickableMeshes.push(tileMesh);
     };
 
@@ -656,7 +669,7 @@ export class ThreeCubeEngine {
       addFaceTile(face, colorKey);
     }
 
-    return group;
+    return { group, stickerMeshes };
   }
 
   private clearCubeMeshes() {
@@ -682,6 +695,7 @@ export class ThreeCubeEngine {
   public loadPuzzle(puzzleType: PuzzleType, animateMorph = true) {
     this.clearCubeMeshes();
     this.puzzleType = puzzleType;
+    this.activePatternId = 'solved';
     this.cubieStates = createSolvedCube(puzzleType);
     this.clearGuideArrow();
 
@@ -696,7 +710,7 @@ export class ThreeCubeEngine {
 
     for (let i = 0; i < this.cubieStates.length; i++) {
       const cubie = this.cubieStates[i];
-      const group = this.buildCubieGroup(cubie, unitScale, isMirror);
+      const { group, stickerMeshes } = this.buildCubieGroup(cubie, unitScale, isMirror);
       const basePos = new THREE.Vector3(
         cubie.homeCenter[0] * unitScale,
         cubie.homeCenter[1] * unitScale,
@@ -712,6 +726,7 @@ export class ThreeCubeEngine {
       this.cubieVisuals.set(cubie.id, {
         id: cubie.id,
         group,
+        stickerMeshes,
         homePos: basePos.clone(),
         currentGrid: [...cubie.pos],
         explodeDir,
@@ -727,6 +742,39 @@ export class ThreeCubeEngine {
     } else {
       this.morphProgress = 0;
     }
+  }
+
+  /**
+   * Applies a custom sticker pattern template (checkerboard, stripes, cross, etc.) directly
+   * onto the 3D cube by reassigning the engine's shared PBR face materials per sticker tile.
+   */
+  public applyStickerPattern(patternId: StickerPatternId, animate = true) {
+    this.loadPuzzle(this.puzzleType, false);
+    this.activePatternId = patternId;
+    this.cubieStates = applyPatternToCubieStates(this.cubieStates, this.puzzleType, patternId);
+
+    const isMirror = this.puzzleType === 'mirror';
+    for (const cubie of this.cubieStates) {
+      const visual = this.cubieVisuals.get(cubie.id);
+      if (!visual) continue;
+      for (const [face, colorKey] of Object.entries(cubie.stickers) as [FaceKey, FaceKey][]) {
+        const tileMesh = visual.stickerMeshes[face];
+        if (!tileMesh) continue;
+        tileMesh.material =
+          isMirror && patternId === 'solved' ? this.mirrorTileMat : this.faceMaterials[colorKey];
+      }
+    }
+
+    if (animate) {
+      this.morphProgress = 0.34;
+      this.ringPulse = 0.65;
+      this.emitBurst(new THREE.Vector3(0, 0, 0), 14, 2.2);
+      cubeAudio.playMorphWhoosh();
+    }
+  }
+
+  public getActiveStickerPattern(): StickerPatternId {
+    return this.activePatternId;
   }
 
   /**

@@ -8,6 +8,7 @@ import {
   CloudRain,
   Compass,
   Gamepad2,
+  Grid3X3,
   Headphones,
   Layers,
   Loader2,
@@ -30,6 +31,7 @@ import {
   X,
 } from 'lucide-react';
 import { AMBIENT_SOUNDSCAPES } from '../cube/audio';
+import { buildApiUrl } from '../cube/backendConfig';
 import { ALGORITHM_PRESETS, CURRICULUM } from '../cube/curriculum';
 import { buildThemePaletteFromCustom, type CustomThemeRecord } from '../cube/customThemes';
 import {
@@ -38,6 +40,12 @@ import {
   SOLVE_METHODS,
   type MethodSolvePlan,
 } from '../cube/methodSolver';
+import {
+  getPatternPreviewGrid,
+  hexNumberToCss,
+  STICKER_PATTERN_TEMPLATES,
+  type StickerPatternId,
+} from '../cube/patternTemplates';
 import type { SequenceTrackerState } from '../cube/sequenceTracker';
 import { THEME_LIST } from '../cube/themes';
 import type {
@@ -65,6 +73,7 @@ interface BottomDockProps {
   hintMove: CubeMove | null;
   explodeAmount: number;
   turnSpeed: number;
+  activePatternId: StickerPatternId;
   selectedMethod: SolveMethodId;
   activeMethodPlan: MethodSolvePlan | null;
   activeLessonId: string;
@@ -96,6 +105,7 @@ interface BottomDockProps {
   onExportSnapshot: () => void;
   onSelectSoundscape: (s: AmbientSoundscapeId) => void;
   onAmbientVolumeChange: (v: number) => void;
+  onApplyPattern: (patternId: StickerPatternId) => void;
   onRunAlgorithm: (notations: string[]) => void;
   onSelectLesson: (lesson: LessonStep) => void;
   onStageLesson: (lesson: LessonStep) => void;
@@ -129,6 +139,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   hintMove,
   explodeAmount,
   turnSpeed,
+  activePatternId,
   selectedMethod,
   activeMethodPlan,
   activeLessonId,
@@ -160,6 +171,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onExportSnapshot,
   onSelectSoundscape,
   onAmbientVolumeChange,
+  onApplyPattern,
   onRunAlgorithm,
   onSelectLesson,
   onStageLesson,
@@ -282,7 +294,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
     setCoachAnswer(null);
 
     try {
-      const res = await fetch('/api/coach/analyze', {
+      const res = await fetch(buildApiUrl('/api/coach/analyze'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1259,6 +1271,100 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   </label>
                 </div>
 
+                {/* Custom Sticker Pattern Templates */}
+                <div
+                  className="pt-2.5 border-t"
+                  style={{ borderColor: theme.ui.border }}
+                  data-testid="lab-pattern-templates"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span
+                      className="text-xs font-medium inline-flex items-center gap-1.5 truncate"
+                      style={{ color: theme.ui.muted }}
+                    >
+                      <Grid3X3
+                        className="w-3.5 h-3.5 shrink-0"
+                        style={{ color: activePatternId !== 'solved' ? theme.ui.accent : theme.ui.muted }}
+                      />
+                      <span>Sticker Pattern Templates</span>
+                    </span>
+                    {activePatternId !== 'solved' && (
+                      <button
+                        type="button"
+                        data-testid="pattern-reset-btn"
+                        disabled={isBusy}
+                        onClick={() => onApplyPattern('solved')}
+                        className="h-6 px-2 rounded-md border text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer disabled:opacity-45 shrink-0"
+                        style={{
+                          backgroundColor: theme.ui.surfaceSubtle,
+                          borderColor: theme.ui.border,
+                          color: theme.ui.text,
+                        }}
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {STICKER_PATTERN_TEMPLATES.map((tpl) => {
+                      const active = tpl.id === activePatternId;
+                      const previewGrid = getPatternPreviewGrid(tpl.id, 'pz', 3);
+                      return (
+                        <button
+                          key={tpl.id}
+                          type="button"
+                          data-testid={`pattern-btn-${tpl.id}`}
+                          aria-pressed={active}
+                          disabled={isBusy}
+                          title={tpl.description}
+                          onClick={() => onApplyPattern(tpl.id)}
+                          className="h-10 px-2 rounded-lg border flex items-center gap-2 text-left transition-colors disabled:opacity-45 cursor-pointer"
+                          style={{
+                            backgroundColor: active ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
+                            borderColor: active ? theme.ui.accent : theme.ui.border,
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="w-6 h-6 rounded-[5px] p-[2px] grid grid-cols-3 gap-[1.5px] shrink-0 border"
+                            style={{
+                              backgroundColor: hexNumberToCss(theme.scene.chassisColor),
+                              borderColor: theme.ui.border,
+                            }}
+                          >
+                            {previewGrid.flatMap((row, rIdx) =>
+                              row.map((faceKey, cIdx) => (
+                                <span
+                                  key={`${rIdx}-${cIdx}`}
+                                  className="rounded-[1.5px]"
+                                  style={{
+                                    backgroundColor: hexNumberToCss(theme.scene.faceColors[faceKey]),
+                                  }}
+                                />
+                              ))
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1 flex flex-col leading-tight">
+                            <span
+                              className="text-xs font-semibold truncate"
+                              style={{ color: active ? theme.ui.accent : theme.ui.text }}
+                            >
+                              {tpl.name}
+                            </span>
+                            <span
+                              className="text-[10px] truncate"
+                              style={{ color: theme.ui.muted }}
+                            >
+                              {tpl.tag}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {/* Figma Community & Custom Themes + Ambient Soundscapes */}
                 <div className="grid grid-cols-1 gap-3.5 pt-2.5 border-t" style={{ borderColor: theme.ui.border }}>
                   {/* Studio & Custom Figma Themes */}
@@ -1398,10 +1504,10 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   </div>
                 </div>
 
-                {/* Compact Patterns & Algorithms Strip */}
+                {/* Compact Move Algorithms Strip */}
                 <div className="flex items-center gap-1.5 pt-2 border-t overflow-x-auto kubi-scroll-x" style={{ borderColor: theme.ui.border }}>
                   <span className="text-[11px] font-medium shrink-0 mr-1" style={{ color: theme.ui.muted }}>
-                    Patterns
+                    Algorithms
                   </span>
                   {presets.slice(0, 4).map((preset) => (
                     <button

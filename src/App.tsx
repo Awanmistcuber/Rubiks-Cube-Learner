@@ -10,6 +10,7 @@ import { TimerDashboardModal, type TimerDashboardTab } from './components/TimerD
 import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
 import { cubeAudio, loadAmbientPrefs, saveAmbientPrefs } from './cube/audio';
+import { buildApiUrl } from './cube/backendConfig';
 import {
   computeSolutionFromHistory,
   generateScramble,
@@ -59,6 +60,7 @@ import {
   solveCubeWithMethod,
   type MethodSolvePlan,
 } from './cube/methodSolver';
+import type { StickerPatternId } from './cube/patternTemplates';
 import { buildInternalViewHref, parseInitialSeoRoute, syncDocumentSeo, type SeoViewId } from './cube/seo';
 import { buildSnapshotFilename, triggerPngDownload } from './cube/snapshot';
 import { ThreeCubeEngine } from './cube/ThreeCubeEngine';
@@ -147,6 +149,7 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [explodeAmount, setExplodeAmount] = useState(0);
   const [turnSpeed, setTurnSpeed] = useState(1.1);
+  const [activePatternId, setActivePatternId] = useState<StickerPatternId>('solved');
 
   // Gameplay & Solve tracking
   const [moveCount, setMoveCount] = useState(0);
@@ -478,7 +481,7 @@ export default function App() {
               };
               upsertLocalDailyEntry(localDailyEntry);
 
-              fetch('/api/daily-challenge/submit', {
+              fetch(buildApiUrl('/api/daily-challenge/submit'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -620,6 +623,7 @@ export default function App() {
 
     activeDailyRef.current = null;
     setActiveDailyDateKey(null);
+    setActivePatternId('solved');
   }, []);
 
   const handleStartStudio = useCallback(() => {
@@ -1296,6 +1300,20 @@ export default function App() {
     engineRef.current?.setTurnSpeed(v);
   }, []);
 
+  const handleApplyPattern = useCallback(
+    (patternId: StickerPatternId) => {
+      const engine = engineRef.current;
+      if (!engine || isBusy) return;
+      cubeAudio.playUiTick();
+      engine.clearGuideArrow();
+      resetProgressTrackers();
+      setVictorySnapshot(null);
+      engine.applyStickerPattern(patternId, true);
+      setActivePatternId(patternId);
+    },
+    [isBusy, resetProgressTrackers]
+  );
+
   const handleRunAlgorithm = useCallback(
     (notations: string[]) => {
       const engine = engineRef.current;
@@ -1626,6 +1644,7 @@ export default function App() {
             hintMove={hintMove}
             explodeAmount={explodeAmount}
             turnSpeed={turnSpeed}
+            activePatternId={activePatternId}
             selectedMethod={selectedMethod}
             activeMethodPlan={activeMethodPlan}
             activeLessonId={activeLessonId}
@@ -1689,6 +1708,7 @@ export default function App() {
             onExportSnapshot={handleExportSnapshot}
             onSelectSoundscape={handleSelectSoundscape}
             onAmbientVolumeChange={handleAmbientVolumeChange}
+            onApplyPattern={handleApplyPattern}
             onRunAlgorithm={handleRunAlgorithm}
             onSelectLesson={handleSelectLesson}
             onStageLesson={handleStageLesson}
