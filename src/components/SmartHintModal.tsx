@@ -23,6 +23,7 @@ import { cubeAudio } from '../cube/audio';
 import { buildApiUrl } from '../cube/backendConfig';
 import {
   applyNotationToScannedFaces,
+  buildColorCalibration,
   buildScannedFacesFromScramble,
   classifyRgbToWcaFace,
   computeBasicAlgorithmHints,
@@ -35,6 +36,7 @@ import {
   scannedFacesToCubieStates,
   validateScannedCube,
   WCA_FACE_META,
+  type ColorCalibration,
   type RgbTriplet,
   type ScannedFaces,
   type ScannedRgbFaces,
@@ -119,6 +121,11 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const sampleTimerRef = useRef<number | null>(null);
 
+  // Progressive color calibration built from whichever physical face centers have been scanned so far
+  const liveCalibration = useMemo(() => buildColorCalibration(rawRgbs), [rawRgbs]);
+  const liveCalibrationRef = useRef<ColorCalibration>(liveCalibration);
+  liveCalibrationRef.current = liveCalibration;
+
   const validation = useMemo(() => validateScannedCube(faces), [faces]);
 
   const stopCamera = useCallback(() => {
@@ -176,7 +183,7 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
     ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, size, size);
     const imgData = ctx.getImageData(0, 0, size, size);
     const rgbs = sampleGridFromRgba(imgData.data, size, size, RETICLE_BOX_FRACTION);
-    const facesGrid = rgbs.map((rgb) => classifyRgbToWcaFace(rgb));
+    const facesGrid = rgbs.map((rgb) => classifyRgbToWcaFace(rgb, liveCalibrationRef.current));
 
     // Also render cropped reticle-only JPEG for optional AI Vision Read
     const cropCanvas = document.createElement('canvas');
@@ -280,10 +287,13 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
       if (rgbs) {
         setRawRgbs((prevRgbs) => {
           const nextRgbs: ScannedRgbFaces = { ...prevRgbs, [targetFace]: rgbs };
-          const allSixSampled = SCAN_FACE_ORDER.every((f) => Boolean(nextRgbs[f]));
+          const sampledFacesCount = SCAN_FACE_ORDER.filter((f) => Boolean(nextRgbs[f])).length;
           setFaces((prevFaces) => {
             const updatedFaces = { ...prevFaces, [targetFace]: normalized };
-            return allSixSampled ? recalibrateScannedFaces(nextRgbs, updatedFaces) : updatedFaces;
+            // Progressively recalibrate as soon as 2+ centers are scanned (and balance 9/9 once all 6 are captured)
+            return sampledFacesCount >= 2
+              ? recalibrateScannedFaces(nextRgbs, updatedFaces)
+              : updatedFaces;
           });
           return nextRgbs;
         });
@@ -342,7 +352,9 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
         ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
         const imgData = ctx.getImageData(0, 0, size, size);
         const sampledRgbs = sampleGridFromRgba(imgData.data, size, size, RETICLE_BOX_FRACTION);
-        const sampledFaces = sampledRgbs.map((rgb) => classifyRgbToWcaFace(rgb));
+        const sampledFaces = sampledRgbs.map((rgb) =>
+          classifyRgbToWcaFace(rgb, liveCalibrationRef.current)
+        );
         const compressedBase64 = canvas.toDataURL('image/jpeg', 0.84);
         setUploadedBase64(compressedBase64);
 

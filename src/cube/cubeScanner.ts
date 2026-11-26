@@ -117,10 +117,57 @@ export const FACEKEY_TO_WCA: Record<FaceKey, WcaFace> = {
 };
 
 // ============================================================================
-// Perceptual CIELAB Color Classification & Camera Grid Sampling
+// Perceptual HSV + CIELAB Color Classification & Camera Grid Sampling
 // ============================================================================
 
 export type LabTriplet = [number, number, number];
+
+export interface HsvTriplet {
+  h: number; // 0..360 degrees
+  s: number; // 0..1
+  v: number; // 0..1
+}
+
+export interface CalibratedFaceRef {
+  rgb: RgbTriplet;
+  lab: LabTriplet;
+  hsv: HsvTriplet;
+  labHue: number; // 0..360 degrees in CIELAB (a*, b*) chroma plane
+}
+
+export interface ColorCalibration {
+  wbGains: [number, number, number] | null;
+  centers: Partial<Record<WcaFace, CalibratedFaceRef>>;
+}
+
+export function rgbToHsv([r, g, b]: RgbTriplet): HsvTriplet {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+
+  let h = 0;
+  if (d > 1e-6) {
+    if (max === rn) {
+      h = 60 * (((gn - bn) / d) % 6);
+    } else if (max === gn) {
+      h = 60 * ((bn - rn) / d + 2);
+    } else {
+      h = 60 * ((rn - gn) / d + 4);
+    }
+    if (h < 0) h += 360;
+  }
+
+  const s = max === 0 ? 0 : d / max;
+  return { h, s, v: max };
+}
+
+function circularHueDiff(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
 
 export function rgbToLab([r, g, b]: RgbTriplet): LabTriplet {
   const sr = r / 255;
@@ -152,76 +199,178 @@ export function deltaE(a: LabTriplet, b: LabTriplet): number {
   return Math.hypot(dl, da, db);
 }
 
-// Canonical WCA sticker RGB references under neutral daylight
+function labHueAngle(lab: LabTriplet): number {
+  const deg = (Math.atan2(lab[2], lab[1]) * 180) / Math.PI;
+  return deg < 0 ? deg + 360 : deg;
+}
+
+function buildFaceRef(rgb: RgbTriplet): CalibratedFaceRef {
+  const lab = rgbToLab(rgb);
+  return {
+    rgb,
+    lab,
+    hsv: rgbToHsv(rgb),
+    labHue: labHueAngle(lab),
+  };
+}
+
+function clampByte(v: number): number {
+  return Math.max(0, Math.min(255, Math.round(v)));
+}
+
+function applyWbGains(rgb: RgbTriplet, gains: [number, number, number] | null): RgbTriplet {
+  if (!gains) return rgb;
+  return [
+    clampByte(rgb[0] * gains[0]),
+    clampByte(rgb[1] * gains[1]),
+    clampByte(rgb[2] * gains[2]),
+  ];
+}
+
+// Realistic physical Rubik's Cube sticker RGB references under typical camera exposure
+// (calibrated so real-world indoor Orange doesn't collapse into Red)
 const CANONICAL_WCA_RGB: Record<WcaFace, RgbTriplet> = {
-  U: [242, 244, 246], // White
-  D: [245, 214, 38],  // Yellow
-  R: [198, 34, 34],   // Red
-  L: [242, 118, 22],  // Orange
-  F: [24, 158, 72],   // Green
-  B: [26, 86, 206],   // Blue
+  U: [232, 234, 236], // White
+  D: [232, 202, 34],  // Yellow (Hue ~51°)
+  R: [178, 28, 36],   // Red (Hue ~357°, deep crimson/scarlet)
+  L: [218, 92, 24],   // Orange (Hue ~21°, warm physical orange)
+  F: [28, 152, 68],   // Green (Hue ~139°)
+  B: [26, 82, 194],   // Blue (Hue ~220°)
 };
 
-const CANONICAL_WCA_LAB: Record<WcaFace, LabTriplet> = {
-  U: rgbToLab(CANONICAL_WCA_RGB.U),
-  D: rgbToLab(CANONICAL_WCA_RGB.D),
-  R: rgbToLab(CANONICAL_WCA_RGB.R),
-  L: rgbToLab(CANONICAL_WCA_RGB.L),
-  F: rgbToLab(CANONICAL_WCA_RGB.F),
-  B: rgbToLab(CANONICAL_WCA_RGB.B),
+const CANONICAL_WCA_REFS: Record<WcaFace, CalibratedFaceRef> = {
+  U: buildFaceRef(CANONICAL_WCA_RGB.U),
+  D: buildFaceRef(CANONICAL_WCA_RGB.D),
+  R: buildFaceRef(CANONICAL_WCA_RGB.R),
+  L: buildFaceRef(CANONICAL_WCA_RGB.L),
+  F: buildFaceRef(CANONICAL_WCA_RGB.F),
+  B: buildFaceRef(CANONICAL_WCA_RGB.B),
 };
+
+/**
+ * Builds a dynamic lighting calibration profile from whichever physical face centers
+ * have been scanned so far, including Von Kries white-balance normalization from the White (U) center.
+ */
+export function buildColorCalibration(rgbFaces: ScannedRgbFaces): ColorCalibration {
+  let wbGains: [number, number, number] | null = null;
+  const whiteCenter = rgbFaces.U?.[4];
+  if (whiteCenter) {
+    const [wr, wg, wb] = whiteCenter;
+    const avg = (wr + wg + wb) / 3;
+    // Only apply white-balance normalization if the sampled White center is reasonably bright & low-chroma
+    const wHsv = rgbToHsv(whiteCenter);
+    if (avg > 85 && wHsv.s < 0.42) {
+      const target = Math.max(185, Math.min(238, avg));
+      const clampGain = (g: number) => Math.max(0.72, Math.min(1.42, g));
+      wbGains = [
+        clampGain(target / Math.max(40, wr)),
+        clampGain(target / Math.max(40, wg)),
+        clampGain(target / Math.max(40, wb)),
+      ];
+    }
+  }
+
+  const centers: Partial<Record<WcaFace, CalibratedFaceRef>> = {};
+  for (const face of SCAN_FACE_ORDER) {
+    const faceRgbs = rgbFaces[face];
+    if (faceRgbs && faceRgbs.length === 9) {
+      centers[face] = buildFaceRef(applyWbGains(faceRgbs[4], wbGains));
+    }
+  }
+
+  return { wbGains, centers };
+}
+
+function isColorCalibration(
+  input: ColorCalibration | Partial<Record<WcaFace, LabTriplet>> | undefined
+): input is ColorCalibration {
+  return Boolean(input && 'centers' in input && 'wbGains' in input);
+}
+
+/**
+ * Perceptual cost between a white-balanced sticker RGB and a candidate WCA face reference.
+ * Uses Hue angle (HSV + CIELAB chroma angle) as the primary discriminator so shadow/exposure
+ * shifts never collapse Orange (L) into Red (R).
+ */
+function computeStickerFaceCost(
+  lab: LabTriplet,
+  hsv: HsvTriplet,
+  labHue: number,
+  face: WcaFace,
+  ref: CalibratedFaceRef
+): number {
+  if (face === 'U') {
+    const satDiff = Math.abs(hsv.s - ref.hsv.s);
+    const valPenalty = hsv.v < 0.34 ? (0.34 - hsv.v) * 140 : 0;
+    const chromaDist = Math.hypot(lab[1] - ref.lab[1], lab[2] - ref.lab[2]);
+    return (
+      satDiff * 140 +
+      Math.abs(lab[0] - ref.lab[0]) * 0.42 +
+      chromaDist * 0.52 +
+      valPenalty
+    );
+  }
+
+  const hDiff = circularHueDiff(hsv.h, ref.hsv.h);
+  const labHDiff = circularHueDiff(labHue, ref.labHue);
+  const dl = Math.abs(lab[0] - ref.lab[0]);
+  const chromaDist = Math.hypot(lab[1] - ref.lab[1], lab[2] - ref.lab[2]);
+  const lowSatPenalty = hsv.s < 0.22 ? (0.22 - hsv.s) * 230 : 0;
+
+  return hDiff * 2.65 + labHDiff * 1.15 + chromaDist * 0.3 + dl * 0.36 + lowSatPenalty;
+}
 
 export function classifyRgbToWcaFace(
   rgb: RgbTriplet,
-  calibratedCenters?: Partial<Record<WcaFace, LabTriplet>>
+  calibrationOrCenters?: ColorCalibration | Partial<Record<WcaFace, LabTriplet>>
 ): WcaFace {
-  const lab = rgbToLab(rgb);
-
-  // If all 6 centers are calibrated from the user's real camera lighting, match directly in CIELAB
-  const hasFullCalibration =
-    calibratedCenters &&
-    SCAN_FACE_ORDER.every((f) => Boolean(calibratedCenters[f]));
-
-  if (hasFullCalibration && calibratedCenters) {
+  // Support legacy Partial<Record<WcaFace, LabTriplet>> callers cleanly
+  if (calibrationOrCenters && !isColorCalibration(calibrationOrCenters)) {
+    const lab = rgbToLab(rgb);
+    const labHue = labHueAngle(lab);
     let bestFace: WcaFace = 'U';
-    let bestDist = Infinity;
+    let bestCost = Infinity;
     for (const face of SCAN_FACE_ORDER) {
-      const ref = calibratedCenters[face]!;
-      // Slightly de-emphasize luminance (L*) compared to chroma (a*, b*) so shadows don't confuse colors
-      const dl = (lab[0] - ref[0]) * 0.65;
-      const da = lab[1] - ref[1];
-      const db = lab[2] - ref[2];
-      const d = Math.hypot(dl, da, db);
-      if (d < bestDist) {
-        bestDist = d;
+      const refLab = calibrationOrCenters[face] ?? CANONICAL_WCA_REFS[face].lab;
+      const dl = Math.abs(lab[0] - refLab[0]) * 0.5;
+      const chromaDist = Math.hypot(lab[1] - refLab[1], lab[2] - refLab[2]);
+      const anglePenalty =
+        face === 'U' ? 0 : circularHueDiff(labHue, labHueAngle(refLab)) * 0.9;
+      const cost = Math.hypot(dl, chromaDist) + anglePenalty;
+      if (cost < bestCost) {
+        bestCost = cost;
         bestFace = face;
       }
     }
     return bestFace;
   }
 
-  // Otherwise use chroma-weighted CIELAB + HSV white/orange disambiguation
-  const [r, g, b] = rgb;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const sat = max === 0 ? 0 : (max - min) / max;
-  const val = max / 255;
+  const cal = calibrationOrCenters;
+  const wbRgb = applyWbGains(rgb, cal?.wbGains ?? null);
+  const hsv = rgbToHsv(wbRgb);
+  const lab = rgbToLab(wbRgb);
+  const labHue = labHueAngle(lab);
 
-  // Crisp low-saturation bright pixels are White (U) even under warm tungsten room lights
-  if (sat < 0.24 && val > 0.42) {
+  const hasFullCalibration = Boolean(
+    cal && SCAN_FACE_ORDER.every((f) => Boolean(cal.centers[f]))
+  );
+
+  // Fast crisp White (U) guard before full calibration (handles cool/warm white stickers cleanly)
+  if (
+    !hasFullCalibration &&
+    ((hsv.s < 0.23 && hsv.v > 0.36) ||
+      (hsv.s < 0.28 && hsv.v > 0.62 && hsv.h >= 24 && hsv.h <= 66))
+  ) {
     return 'U';
   }
 
   let bestFace: WcaFace = 'U';
-  let bestDist = Infinity;
+  let bestCost = Infinity;
   for (const face of SCAN_FACE_ORDER) {
-    const ref = calibratedCenters?.[face] ?? CANONICAL_WCA_LAB[face];
-    const dl = (lab[0] - ref[0]) * 0.72;
-    const da = lab[1] - ref[1];
-    const db = lab[2] - ref[2];
-    const d = Math.hypot(dl, da, db);
-    if (d < bestDist) {
-      bestDist = d;
+    const ref = cal?.centers[face] ?? CANONICAL_WCA_REFS[face];
+    const cost = computeStickerFaceCost(lab, hsv, labHue, face, ref);
+    if (cost < bestCost) {
+      bestCost = cost;
       bestFace = face;
     }
   }
@@ -230,7 +379,7 @@ export function classifyRgbToWcaFace(
 
 /**
  * Samples 9 robust sticker RGB values from the centered square reticle of a video/photo frame,
- * trimming specular highlights and dark seam edges inside each cell patch.
+ * trimming specular plastic highlights (top 25%) and dark seam shadows (bottom 20%).
  */
 export function sampleGridFromRgba(
   data: Uint8ClampedArray,
@@ -264,14 +413,14 @@ export function sampleGridFromRgba(
       }
 
       if (samples.length === 0) {
-        results.push([240, 240, 240]);
+        results.push([232, 234, 236]);
         continue;
       }
 
-      // Trimmed mean (drop darkest 20% seam shadows and brightest 20% glare reflections)
+      // Trimmed mean (drop darkest 20% seam shadows and brightest 25% glare reflections)
       samples.sort((a, b) => a.lum - b.lum);
       const lo = Math.floor(samples.length * 0.2);
-      const hi = Math.max(lo + 1, Math.ceil(samples.length * 0.8));
+      const hi = Math.max(lo + 1, Math.ceil(samples.length * 0.75));
       let sr = 0;
       let sg = 0;
       let sb = 0;
@@ -289,21 +438,16 @@ export function sampleGridFromRgba(
 }
 
 /**
- * Re-classifies all camera-captured faces once multiple/all 6 centers are scanned so
- * lighting shifts (warm lamps, cool LEDs, shadows) automatically white-balance against
- * the physical cube's actual 6 center stickers.
+ * Re-classifies all camera-captured faces using dynamic Von Kries white-balance and
+ * HSV+CIELAB center calibration. When all 6 faces have been scanned, also applies
+ * bounded-margin global balancing to resolve ambiguous Red/Orange or White/Yellow
+ * border stickers toward the physical 9-per-color cube invariant.
  */
 export function recalibrateScannedFaces(
   rgbFaces: ScannedRgbFaces,
   currentFaces: ScannedFaces
 ): ScannedFaces {
-  const calibratedCenters: Partial<Record<WcaFace, LabTriplet>> = {};
-  for (const face of SCAN_FACE_ORDER) {
-    const faceRgbs = rgbFaces[face];
-    if (faceRgbs && faceRgbs.length === 9) {
-      calibratedCenters[face] = rgbToLab(faceRgbs[4]);
-    }
-  }
+  const cal = buildColorCalibration(rgbFaces);
 
   const next: ScannedFaces = {
     U: [...currentFaces.U],
@@ -314,13 +458,134 @@ export function recalibrateScannedFaces(
     B: [...currentFaces.B],
   };
 
+  // Track per-sticker costs for all 48 outer stickers if all 6 faces are scanned
+  const allSixSampled = SCAN_FACE_ORDER.every(
+    (f) => Boolean(rgbFaces[f] && rgbFaces[f]!.length === 9)
+  );
+
+  interface OuterStickerSlot {
+    face: WcaFace;
+    idx: number;
+    assigned: WcaFace;
+    costs: Record<WcaFace, number>;
+  }
+
+  const outerSlots: OuterStickerSlot[] = [];
+
   for (const face of SCAN_FACE_ORDER) {
     const faceRgbs = rgbFaces[face];
     if (!faceRgbs || faceRgbs.length !== 9) continue;
-    next[face] = faceRgbs.map((rgb, idx) =>
-      idx === 4 ? face : classifyRgbToWcaFace(rgb, calibratedCenters)
-    );
+
+    next[face] = faceRgbs.map((rgb, idx) => {
+      if (idx === 4) return face;
+
+      const wbRgb = applyWbGains(rgb, cal.wbGains);
+      const hsv = rgbToHsv(wbRgb);
+      const lab = rgbToLab(wbRgb);
+      const labHue = labHueAngle(lab);
+
+      const costs = {} as Record<WcaFace, number>;
+      let bestFace: WcaFace = 'U';
+      let bestCost = Infinity;
+      for (const candidate of SCAN_FACE_ORDER) {
+        const ref = cal.centers[candidate] ?? CANONICAL_WCA_REFS[candidate];
+        const c = computeStickerFaceCost(lab, hsv, labHue, candidate, ref);
+        costs[candidate] = c;
+        if (c < bestCost) {
+          bestCost = c;
+          bestFace = candidate;
+        }
+      }
+
+      if (allSixSampled) {
+        outerSlots.push({ face, idx, assigned: bestFace, costs });
+      }
+      return bestFace;
+    });
   }
+
+  // Bounded-margin global 9-per-color refinement when all 6 faces are scanned:
+  // Resolves shadowed Red<->Orange (or White<->Yellow) border stickers cleanly without
+  // ever forcing an unambiguously distinct color (e.g. vivid Orange -> White).
+  if (allSixSampled && outerSlots.length === 48) {
+    const MAX_STEP_MARGIN = 45;
+    const counts: Record<WcaFace, number> = { U: 1, R: 1, F: 1, D: 1, L: 1, B: 1 };
+    for (const slot of outerSlots) {
+      counts[slot.assigned]++;
+    }
+
+    for (let iter = 0; iter < 16; iter++) {
+      const overFaces = SCAN_FACE_ORDER.filter((f) => counts[f] > 9);
+      const underFaces = SCAN_FACE_ORDER.filter((f) => counts[f] < 9);
+      if (overFaces.length === 0 || underFaces.length === 0) break;
+
+      // Find lowest-cost shortest augmenting path (up to 2 hops) from any overFace to any underFace
+      // Each edge (cFrom -> cTo) represents reassigning the best sticker currently at cFrom to cTo.
+      let bestPath: { slots: OuterStickerSlot[]; targets: WcaFace[]; totalDelta: number } | null =
+        null;
+
+      // 1-hop direct reassignments (e.g., R -> L)
+      for (const fromFace of overFaces) {
+        for (const toFace of underFaces) {
+          for (const slot of outerSlots) {
+            if (slot.assigned !== fromFace) continue;
+            const delta = slot.costs[toFace] - slot.costs[fromFace];
+            if (delta <= MAX_STEP_MARGIN && (!bestPath || delta < bestPath.totalDelta)) {
+              bestPath = { slots: [slot], targets: [toFace], totalDelta: delta };
+            }
+          }
+        }
+      }
+
+      // 2-hop chain reassignments (e.g., R -> L -> D) if no tighter 1-hop exists
+      for (const fromFace of overFaces) {
+        for (const midFace of SCAN_FACE_ORDER) {
+          if (midFace === fromFace || underFaces.includes(midFace)) continue;
+          let bestHop1: { slot: OuterStickerSlot; delta: number } | null = null;
+          for (const slot of outerSlots) {
+            if (slot.assigned !== fromFace) continue;
+            const d1 = slot.costs[midFace] - slot.costs[fromFace];
+            if (d1 <= MAX_STEP_MARGIN && (!bestHop1 || d1 < bestHop1.delta)) {
+              bestHop1 = { slot, delta: d1 };
+            }
+          }
+          if (!bestHop1) continue;
+
+          for (const toFace of underFaces) {
+            for (const slot2 of outerSlots) {
+              if (slot2.assigned !== midFace) continue;
+              const d2 = slot2.costs[toFace] - slot2.costs[midFace];
+              const totalDelta = bestHop1.delta + d2;
+              if (
+                d2 <= MAX_STEP_MARGIN &&
+                totalDelta <= MAX_STEP_MARGIN * 1.4 &&
+                (!bestPath || totalDelta < bestPath.totalDelta)
+              ) {
+                bestPath = {
+                  slots: [bestHop1.slot, slot2],
+                  targets: [midFace, toFace],
+                  totalDelta,
+                };
+              }
+            }
+          }
+        }
+      }
+
+      if (!bestPath) break;
+
+      for (let i = 0; i < bestPath.slots.length; i++) {
+        const slot = bestPath.slots[i];
+        const prevColor = slot.assigned;
+        const nextColor = bestPath.targets[i];
+        counts[prevColor]--;
+        counts[nextColor]++;
+        slot.assigned = nextColor;
+        next[slot.face][slot.idx] = nextColor;
+      }
+    }
+  }
+
   return next;
 }
 

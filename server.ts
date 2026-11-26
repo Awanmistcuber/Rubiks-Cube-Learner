@@ -482,8 +482,9 @@ async function createServer() {
         '[top-left, top-center, top-right, mid-left, center, mid-right, bottom-left, bottom-center, bottom-right].',
         'Map each sticker strictly to its WCA standard color letter:',
         'U = White, R = Red, F = Green, D = Yellow, L = Orange, B = Blue.',
+        'Pay special attention to Red (R) vs Orange (L): Orange (L) is noticeably brighter and warmer/yellower (tangerine/fluorescent orange), while Red (R) is deeper crimson/scarlet. Do NOT collapse bright or shadowed Orange stickers into Red.',
         centerHint
-          ? `The user is scanning the face whose center sticker (index 4) is ${centerHint}. Account for warm/cool lighting, shadows, and plastic glare when distinguishing Red (R) vs Orange (L) and White (U) vs Yellow (D).`
+          ? `The user is scanning the face whose center sticker (index 4) is ${centerHint}. Use that known center sticker as a lighting and color reference when distinguishing Red (R) vs Orange (L) and White (U) vs Yellow (D).`
           : 'Account for warm/cool lighting, shadows, and plastic glare when distinguishing Red (R) vs Orange (L) and White (U) vs Yellow (D).',
       ].join(' ');
 

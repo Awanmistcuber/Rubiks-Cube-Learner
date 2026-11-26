@@ -4,6 +4,7 @@ import Cube from 'cubejs';
 import { applyMove, createSolvedCube, isCubeSolved, parseAlgorithm } from './cubeLogic';
 import {
   applyNotationToScannedFaces,
+  buildColorCalibration,
   buildScannedFacesFromScramble,
   classifyRgbToWcaFace,
   computeBasicAlgorithmHints,
@@ -16,7 +17,9 @@ import {
   scannedFacesToCubieStates,
   scannedFacesToFacelets,
   validateScannedCube,
+  type RgbTriplet,
   type ScannedRgbFaces,
+  type WcaFace,
 } from './cubeScanner';
 
 // Initialize Kociemba solver once for deterministic round-trip verification
@@ -167,3 +170,90 @@ test('applyNotationToScannedFaces and describeMoveInstruction produce accurate n
   assert.equal(instr2.direction, 'double');
   assert.match(instr2.turnLabel, /180/);
 });
+
+test('Red vs Orange classification reliably distinguishes physical camera orange from crimson/scarlet red', () => {
+  // Real-world indoor, shadowed, tungsten, and speedcube fluorescent Orange samples
+  const orangeSamples: RgbTriplet[] = [
+    [195, 78, 32],   // Indoor medium-dim orange (previously misclassified as Red!)
+    [188, 66, 26],   // Dim warm orange
+    [155, 62, 22],   // Shadowed orange sticker
+    [230, 110, 42],  // Warm indoor orange
+    [255, 102, 48],  // Bright speedcube coral/fluorescent orange
+    [218, 92, 24],   // Standard physical orange
+    [212, 82, 34],   // Deep tangerine orange
+  ];
+
+  for (const rgb of orangeSamples) {
+    assert.equal(
+      classifyRgbToWcaFace(rgb),
+      'L',
+      `Expected orange RGB [${rgb.join(', ')}] to classify as 'L' (Orange)`
+    );
+  }
+
+  // Real-world crimson, scarlet, warm-lit, and slightly bright Red samples
+  const redSamples: RgbTriplet[] = [
+    [178, 28, 36],   // Physical crimson red
+    [198, 34, 34],   // Classic Rubik's red
+    [182, 24, 42],   // Deep cool-lit red
+    [152, 26, 28],   // Dim shadowed red
+    [205, 44, 38],   // Warm-lit red
+    [225, 52, 46],   // Bright camera-exposed red
+  ];
+
+  for (const rgb of redSamples) {
+    assert.equal(
+      classifyRgbToWcaFace(rgb),
+      'R',
+      `Expected red RGB [${rgb.join(', ')}] to classify as 'R' (Red)`
+    );
+  }
+});
+
+test('progressive calibration and 6-face bounded-margin balancing cleanly resolve shadowed Red vs Orange stickers', () => {
+  // Simulate indoor warm lighting where Red and Orange centers are close in brightness
+  const centers: Record<WcaFace, RgbTriplet> = {
+    U: [242, 224, 196], // Warm white
+    D: [246, 206, 48],  // Warm yellow
+    R: [188, 36, 36],   // Crimson red
+    L: [216, 86, 30],   // Physical orange
+    F: [34, 148, 72],   // Green
+    B: [30, 86, 186],   // Blue
+  };
+
+  // Progressive calibration after only White (U) and Red (R) are scanned
+  const partialCalib = buildColorCalibration({
+    U: Array(9).fill(centers.U),
+    R: Array(9).fill(centers.R),
+  });
+  assert.equal(classifyRgbToWcaFace([198, 74, 32], partialCalib), 'L');
+  assert.equal(classifyRgbToWcaFace([184, 34, 34], partialCalib), 'R');
+
+  // Full 6-face scan where 2 orange stickers on the L face are heavily shadowed toward reddish-orange
+  // (e.g. raw hue borderline ~11° where single-sticker score slightly leans R, giving R=11, L=7)
+  const shadowedOrange: RgbTriplet = [174, 52, 32];
+  const rgbFaces: ScannedRgbFaces = {
+    U: Array(9).fill(centers.U),
+    R: Array(9).fill(centers.R),
+    F: Array(9).fill(centers.F),
+    D: Array(9).fill(centers.D),
+    L: Array(9).fill(centers.L),
+    B: Array(9).fill(centers.B),
+  };
+  rgbFaces.L = [...rgbFaces.L!];
+  rgbFaces.L[0] = shadowedOrange;
+  rgbFaces.L[8] = shadowedOrange;
+
+  const balanced = recalibrateScannedFaces(rgbFaces, createSolvedScannedFaces());
+
+  const counts: Record<WcaFace, number> = { U: 0, R: 0, F: 0, D: 0, L: 0, B: 0 };
+  for (const face of ['U', 'R', 'F', 'D', 'L', 'B'] as WcaFace[]) {
+    for (const c of balanced[face]) counts[c]++;
+  }
+
+  assert.equal(counts.R, 9, `Expected exactly 9 Red stickers after balancing, got ${counts.R}`);
+  assert.equal(counts.L, 9, `Expected exactly 9 Orange stickers after balancing, got ${counts.L}`);
+  assert.equal(balanced.L[0], 'L');
+  assert.equal(balanced.L[8], 'L');
+});
+
