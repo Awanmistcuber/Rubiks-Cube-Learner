@@ -20,6 +20,7 @@ import {
   Upload,
   VolumeX,
   Waves,
+  X,
 } from 'lucide-react';
 import { AMBIENT_SOUNDSCAPES } from '../cube/audio';
 import type { BackupImportMode } from '../cube/backup';
@@ -104,16 +105,35 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           boxShadow: theme.ui.shadow,
         }}
       >
-        <h2
-          id="pause-title"
-          className="font-display text-2xl font-bold tracking-tight"
-          style={{ color: theme.ui.text }}
-        >
-          {t('settings.title')}
-        </h2>
-        <p className="text-xs sm:text-sm mt-1 mb-5" style={{ color: theme.ui.muted }}>
-          {t('settings.subtitle')}
-        </p>
+        <div className="flex items-start justify-between gap-3 mb-5">
+          <div className="min-w-0">
+            <h2
+              id="pause-title"
+              className="font-display text-2xl font-bold tracking-tight"
+              style={{ color: theme.ui.text }}
+            >
+              {t('settings.title')}
+            </h2>
+            <p className="text-xs sm:text-sm mt-1" style={{ color: theme.ui.muted }}>
+              {t('settings.subtitle')}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="pause-close-btn"
+            aria-label="Close settings"
+            title="Close"
+            onClick={onResume}
+            className="w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+            style={{
+              backgroundColor: theme.ui.surfaceSubtle,
+              borderColor: theme.ui.border,
+              color: theme.ui.muted,
+            }}
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
         {/* UI Language Localization Selector */}
         <div className="mb-4">
