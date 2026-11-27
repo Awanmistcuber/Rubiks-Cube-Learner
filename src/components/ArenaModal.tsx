@@ -88,7 +88,8 @@ interface ReactionBubble {
 
 interface VideoFeedBoxProps {
   stream: MediaStream | null;
-  fallbackFrame?: string | null;
+  hasFallbackFrame?: boolean;
+  subscribeFallbackFrame?: (listener: (dataUrl: string | null) => void) => () => void;
   camOn: boolean;
   micOn: boolean;
   isLocal?: boolean;
@@ -108,9 +109,10 @@ interface VideoFeedBoxProps {
   children?: React.ReactNode;
 }
 
-const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
+const VideoFeedBox: React.FC<VideoFeedBoxProps> = React.memo(({
   stream,
-  fallbackFrame = null,
+  hasFallbackFrame = false,
+  subscribeFallbackFrame,
   camOn,
   micOn,
   isLocal = false,
@@ -131,6 +133,8 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const bgVideoRef = useRef<HTMLVideoElement | null>(null);
+  const fallbackBgImgRef = useRef<HTMLImageElement | null>(null);
+  const fallbackFgImgRef = useRef<HTMLImageElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [videoHasFrame, setVideoHasFrame] = useState(false);
   const [audioBlocked, setAudioBlocked] = useState(false);
@@ -142,13 +146,23 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
     stream && stream.getAudioTracks().some((t) => t.readyState === 'live')
   );
   const canRenderVideoElement = camOn && hasLiveVideoTrack;
-  const showFallbackImage = camOn && Boolean(fallbackFrame) && !videoHasFrame;
-  const showAvatar = !camOn || (!hasLiveVideoTrack && !fallbackFrame);
+  const showFallbackImage = camOn && hasFallbackFrame && !videoHasFrame;
+  const showAvatar = !camOn || (!hasLiveVideoTrack && !hasFallbackFrame);
 
   // Reset decoded frame state when source stream or camera state changes
   useEffect(() => {
     setVideoHasFrame(false);
   }, [stream, camOn]);
+
+  // Stream WebSocket fallback JPEG frames directly to <img> DOM elements (zero React re-renders per frame)
+  useEffect(() => {
+    if (!subscribeFallbackFrame || !showFallbackImage) return;
+    return subscribeFallbackFrame((dataUrl) => {
+      if (!dataUrl) return;
+      if (fallbackFgImgRef.current) fallbackFgImgRef.current.src = dataUrl;
+      if (fallbackBgImgRef.current) fallbackBgImgRef.current.src = dataUrl;
+    });
+  }, [subscribeFallbackFrame, showFallbackImage]);
 
   // Keep both foreground and blurred-background <video> elements muted so autoplay NEVER stalls.
   // Remote audio is routed through the dedicated <audio> element below.
@@ -263,17 +277,17 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
       )}
 
       {/* WebSocket fallback JPEG frame relay: blurred pillarbox fill + strictly centered uncropped foreground */}
-      {showFallbackImage && fallbackFrame && (
+      {showFallbackImage && (
         <>
           <img
+            ref={fallbackBgImgRef}
             aria-hidden="true"
-            src={fallbackFrame}
             alt=""
             className="pointer-events-none absolute inset-0 z-[1] w-full h-full object-cover object-center blur-xl scale-110 opacity-55 brightness-75"
           />
           <img
+            ref={fallbackFgImgRef}
             data-testid={testId ? `${testId}-fallback-img` : undefined}
-            src={fallbackFrame}
             alt={`${name} live camera feed`}
             className="absolute inset-0 z-[2] w-full h-full object-contain object-center"
           />
@@ -393,7 +407,7 @@ const VideoFeedBox: React.FC<VideoFeedBoxProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export const ArenaModal: React.FC<ArenaModalProps> = ({
   theme,
@@ -1596,7 +1610,8 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                 {opponentSeat ? (
                   <VideoFeedBox
                     stream={arena.remoteStream}
-                    fallbackFrame={arena.remoteFallbackFrame}
+                    hasFallbackFrame={arena.hasRemoteFallbackFrame}
+                    subscribeFallbackFrame={arena.subscribeRemoteFallbackFrame}
                     camOn={opponentSeat.camEnabled}
                     micOn={opponentSeat.micEnabled}
                     isLocal={false}
@@ -1611,7 +1626,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                           : opponentSeat.micEnabled
                             ? 'Live Audio'
                             : 'Avatar Mode'
-                        : opponentSeat.camEnabled && arena.remoteFallbackFrame
+                        : opponentSeat.camEnabled && arena.hasRemoteFallbackFrame
                           ? 'Live Video Stream'
                           : 'Timers Synced'
                     }
@@ -2630,7 +2645,8 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
 
                     <VideoFeedBox
                       stream={arena.remoteStream}
-                      fallbackFrame={arena.remoteFallbackFrame}
+                      hasFallbackFrame={arena.hasRemoteFallbackFrame}
+                      subscribeFallbackFrame={arena.subscribeRemoteFallbackFrame}
                       camOn={opponentSeat.camEnabled}
                       micOn={opponentSeat.micEnabled}
                       isLocal={false}
@@ -2645,7 +2661,7 @@ export const ArenaModal: React.FC<ArenaModalProps> = ({
                             : opponentSeat.micEnabled
                               ? 'Live P2P Audio'
                               : 'Connected · Avatar Mode'
-                          : opponentSeat.camEnabled && arena.remoteFallbackFrame
+                          : opponentSeat.camEnabled && arena.hasRemoteFallbackFrame
                             ? 'Live Video Stream · Timers Synced'
                             : arena.webrtcStatus === 'fallback'
                               ? 'Timers Synced · Connecting Relay'

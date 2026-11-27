@@ -1,15 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera } from 'lucide-react';
-import { ArenaModal } from './components/ArenaModal';
 import { BottomDock } from './components/BottomDock';
 import { CompactNotationBar } from './components/CompactNotationBar';
-import { PauseModal, VictoryModal } from './components/Modals';
-import { PaletteStudioModal } from './components/PaletteStudioModal';
-import { ShortcutsHelpOverlay } from './components/ShortcutsHelpOverlay';
-import { SmartHintModal } from './components/SmartHintModal';
-import { TimerDashboardModal, type TimerDashboardTab } from './components/TimerDashboardModal';
+import type { TimerDashboardTab } from './components/TimerDashboardModal';
 import { TitleScreen } from './components/TitleScreen';
 import { TopHud } from './components/TopHud';
+
+// Lazy-load heavy non-initial modals/overlays so initial bundle & early interactions stay fast
+const ArenaModal = lazy(() =>
+  import('./components/ArenaModal').then((m) => ({ default: m.ArenaModal }))
+);
+const SmartHintModal = lazy(() =>
+  import('./components/SmartHintModal').then((m) => ({ default: m.SmartHintModal }))
+);
+const TimerDashboardModal = lazy(() =>
+  import('./components/TimerDashboardModal').then((m) => ({ default: m.TimerDashboardModal }))
+);
+const PaletteStudioModal = lazy(() =>
+  import('./components/PaletteStudioModal').then((m) => ({ default: m.PaletteStudioModal }))
+);
+const ShortcutsHelpOverlay = lazy(() =>
+  import('./components/ShortcutsHelpOverlay').then((m) => ({ default: m.ShortcutsHelpOverlay }))
+);
+const PauseModal = lazy(() =>
+  import('./components/Modals').then((m) => ({ default: m.PauseModal }))
+);
+const VictoryModal = lazy(() =>
+  import('./components/Modals').then((m) => ({ default: m.VictoryModal }))
+);
 import { cubeAudio, loadAmbientPrefs, saveAmbientPrefs } from './cube/audio';
 import { buildApiUrl } from './cube/backendConfig';
 import {
@@ -60,9 +78,9 @@ import {
 } from './cube/sequenceTracker';
 import {
   SOLVE_METHODS,
-  solveCubeWithMethod,
   type MethodSolvePlan,
 } from './cube/methodSolver';
+import { solveCubeWithMethodAsync } from './cube/cubeWorkerClient';
 import { getPatternMoves, type StickerPatternId } from './cube/patternTemplates';
 import { buildInternalViewHref, parseInitialSeoRoute, syncDocumentSeo, type SeoViewId } from './cube/seo';
 import { buildSnapshotFilename, triggerPngDownload } from './cube/snapshot';
@@ -256,6 +274,9 @@ export default function App() {
   paletteStudioOpenRef.current = paletteStudioOpen;
   shortcutsOpenRef.current = shortcutsOpen;
 
+  // Monotonic token to discard stale Web Worker solve results whenever cube state or method changes
+  const planRequestIdRef = useRef<number>(0);
+
   useEffect(() => {
     saveSolveRecords(solveRecords);
   }, [solveRecords]);
@@ -336,6 +357,8 @@ export default function App() {
       mount,
       {
         onMoveApplied: (move, solvedNow, isFromQueue) => {
+          // Any cube mutation invalidates pending background solver computations
+          planRequestIdRef.current += 1;
           // Track full move history for guaranteed accurate Undo & Hint/Auto-Solve
           const nextHistory = simplifyMoves([...historyRef.current, move], puzzleRef.current);
           historyRef.current = nextHistory;
@@ -690,21 +713,27 @@ export default function App() {
             setElapsedMs(0);
 
             if (!solvedNow) {
-              const plan = solveCubeWithMethod(
-                engine.getCubieStates(),
-                selectedMethodRef.current,
-                puzzleRef.current,
-                historyRef.current
-              );
-              activeMethodPlanRef.current = plan;
-              setActiveMethodPlan(plan);
-              playTrackerEpochRef.current += 1;
-              const nextPlayTracker = createSequenceTracker(plan.allMoves.map((m) => m.notation));
-              playTrackerRef.current = nextPlayTracker;
-              setPlayTracker(nextPlayTracker);
-              const label = `${plan.methodName} Solve`;
-              playTrackerLabelRef.current = label;
-              setPlayTrackerLabel(label);
+              const reqId = ++planRequestIdRef.current;
+              const cubiesSnapshot = engine.getCubieStates();
+              const methodId = selectedMethodRef.current;
+              const puzzle = puzzleRef.current;
+              const historySnapshot = [...historyRef.current];
+              void solveCubeWithMethodAsync(cubiesSnapshot, methodId, puzzle, historySnapshot)
+                .then((plan) => {
+                  if (planRequestIdRef.current !== reqId) return;
+                  activeMethodPlanRef.current = plan;
+                  setActiveMethodPlan(plan);
+                  playTrackerEpochRef.current += 1;
+                  const nextPlayTracker = createSequenceTracker(
+                    plan.allMoves.map((m) => m.notation)
+                  );
+                  playTrackerRef.current = nextPlayTracker;
+                  setPlayTracker(nextPlayTracker);
+                  const label = `${plan.methodName} Solve`;
+                  playTrackerLabelRef.current = label;
+                  setPlayTrackerLabel(label);
+                })
+                .catch(() => {});
             }
           }
           isAutoSolvingRef.current = false;
@@ -787,6 +816,7 @@ export default function App() {
     lastScrambleTokensRef.current = [];
     setHasLastScramble(false);
 
+    planRequestIdRef.current += 1;
     activeDailyRef.current = null;
     setActiveDailyDateKey(null);
     setActivePatternId('solved');
@@ -861,9 +891,11 @@ export default function App() {
   const handleSelectTheme = useCallback(
     (nextThemeKey: string) => {
       cubeAudio.playUiTick();
-      setThemeKey(nextThemeKey);
       saveStudioPref('theme', nextThemeKey);
       saveCustomThemes(customThemes, nextThemeKey);
+      startTransition(() => {
+        setThemeKey(nextThemeKey);
+      });
     },
     [customThemes]
   );
@@ -1241,61 +1273,23 @@ export default function App() {
     engine.showGuideArrow(firstMove);
   }, [isBusy, resetProgressTrackers]);
 
-  const handleResetPlayTracker = useCallback(() => {
-    if (playTrackerRef.current.tokens.length === 0) return;
-    cubeAudio.playUiTick();
-    playTrackerEpochRef.current += 1;
-    if (activeMethodPlanRef.current && engineRef.current) {
-      // Re-plan cleanly from the live 3D state for the active method!
-      const plan = solveCubeWithMethod(
-        engineRef.current.getCubieStates(),
-        selectedMethodRef.current,
-        puzzleRef.current,
-        historyRef.current
-      );
-      activeMethodPlanRef.current = plan;
-      setActiveMethodPlan(plan);
-      const fresh = createSequenceTracker(plan.allMoves.map((m) => m.notation));
-      playTrackerRef.current = fresh;
-      setPlayTracker(fresh);
-      const firstMove = plan.allMoves[0] ?? null;
-      setHintMove(firstMove);
-      if (firstMove) engineRef.current.showGuideArrow(firstMove);
-      else engineRef.current.clearGuideArrow();
-      return;
-    }
-    const restarted = createSequenceTracker(playTrackerRef.current.tokens);
-    playTrackerRef.current = restarted;
-    setPlayTracker(restarted);
-    const firstMove = parseNotation(restarted.tokens[0], puzzleRef.current);
-    setHintMove(firstMove);
-    engineRef.current?.showGuideArrow(firstMove);
-  }, []);
-
-  const handleClearPlayTracker = useCallback(() => {
-    cubeAudio.playUiTick();
-    activeMethodPlanRef.current = null;
-    setActiveMethodPlan(null);
-    playTrackerEpochRef.current += 1;
-    const empty = createSequenceTracker([]);
-    playTrackerRef.current = empty;
-    setPlayTracker(empty);
-    playTrackerLabelRef.current = 'Sequence';
-    setPlayTrackerLabel('Sequence');
-    setHintMove(null);
-    engineRef.current?.clearGuideArrow();
-  }, []);
-
-  const buildFreshMethodPlan = useCallback(
-    (methodId: SolveMethodId, showArrow = false): MethodSolvePlan | null => {
+  const buildFreshMethodPlanAsync = useCallback(
+    async (methodId: SolveMethodId, showArrow = false): Promise<MethodSolvePlan | null> => {
       const engine = engineRef.current;
       if (!engine) return null;
-      const plan = solveCubeWithMethod(
-        engine.getCubieStates(),
+      const reqId = ++planRequestIdRef.current;
+      const cubiesSnapshot = engine.getCubieStates();
+      const puzzle = puzzleRef.current;
+      const historySnapshot = [...historyRef.current];
+
+      const plan = await solveCubeWithMethodAsync(
+        cubiesSnapshot,
         methodId,
-        puzzleRef.current,
-        historyRef.current
+        puzzle,
+        historySnapshot
       );
+      if (planRequestIdRef.current !== reqId) return null;
+
       if (plan.totalMoves === 0) {
         activeMethodPlanRef.current = null;
         setActiveMethodPlan(null);
@@ -1313,15 +1307,47 @@ export default function App() {
 
       if (showArrow && plan.allMoves[0]) {
         setHintMove(plan.allMoves[0]);
-        engine.showGuideArrow(plan.allMoves[0]);
+        engineRef.current?.showGuideArrow(plan.allMoves[0]);
       } else {
         setHintMove(null);
-        engine.clearGuideArrow();
+        engineRef.current?.clearGuideArrow();
       }
       return plan;
     },
     []
   );
+
+  const handleResetPlayTracker = useCallback(() => {
+    if (playTrackerRef.current.tokens.length === 0) return;
+    cubeAudio.playUiTick();
+    playTrackerEpochRef.current += 1;
+    if (activeMethodPlanRef.current && engineRef.current) {
+      // Re-plan cleanly from the live 3D state in the Web Worker!
+      void buildFreshMethodPlanAsync(selectedMethodRef.current, true);
+      return;
+    }
+    const restarted = createSequenceTracker(playTrackerRef.current.tokens);
+    playTrackerRef.current = restarted;
+    setPlayTracker(restarted);
+    const firstMove = parseNotation(restarted.tokens[0], puzzleRef.current);
+    setHintMove(firstMove);
+    engineRef.current?.showGuideArrow(firstMove);
+  }, [buildFreshMethodPlanAsync]);
+
+  const handleClearPlayTracker = useCallback(() => {
+    cubeAudio.playUiTick();
+    planRequestIdRef.current += 1;
+    activeMethodPlanRef.current = null;
+    setActiveMethodPlan(null);
+    playTrackerEpochRef.current += 1;
+    const empty = createSequenceTracker([]);
+    playTrackerRef.current = empty;
+    setPlayTracker(empty);
+    playTrackerLabelRef.current = 'Sequence';
+    setPlayTrackerLabel('Sequence');
+    setHintMove(null);
+    engineRef.current?.clearGuideArrow();
+  }, []);
 
   const handleSelectMethod = useCallback(
     (nextMethod: SolveMethodId) => {
@@ -1331,24 +1357,24 @@ export default function App() {
       selectedMethodRef.current = nextMethod;
       saveStudioPref('method', nextMethod);
       if (!isSolved) {
-        buildFreshMethodPlan(nextMethod, true);
+        void buildFreshMethodPlanAsync(nextMethod, true);
       }
     },
-    [buildFreshMethodPlan, isBusy, isSolved]
+    [buildFreshMethodPlanAsync, isBusy, isSolved]
   );
 
   const handleReplanMethod = useCallback(() => {
     if (isBusy || isSolved) return;
     cubeAudio.playUiTick();
-    buildFreshMethodPlan(selectedMethodRef.current, true);
-  }, [buildFreshMethodPlan, isBusy, isSolved]);
+    void buildFreshMethodPlanAsync(selectedMethodRef.current, true);
+  }, [buildFreshMethodPlanAsync, isBusy, isSolved]);
 
   const handleHint = useCallback(() => {
     const engine = engineRef.current;
     if (!engine || isBusy || isSolved) return;
     cubeAudio.playUiTick();
 
-    // If an active method plan is on track, hint its exact next move; otherwise plan fresh!
+    // If an active method plan is on track, hint its exact next move immediately; otherwise plan in Worker!
     const currPlan = activeMethodPlanRef.current;
     const currTracker = playTrackerRef.current;
     if (
@@ -1362,22 +1388,23 @@ export default function App() {
       return;
     }
 
-    const freshPlan = buildFreshMethodPlan(selectedMethodRef.current, true);
-    if (!freshPlan) {
-      const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
-      if (solution.length === 0) return;
-      setHintMove(solution[0]);
-      engine.showGuideArrow(solution[0]);
-    }
-  }, [buildFreshMethodPlan, isBusy, isSolved]);
+    void buildFreshMethodPlanAsync(selectedMethodRef.current, true).then((freshPlan) => {
+      if (!freshPlan && engineRef.current) {
+        const solution = computeSolutionFromHistory(historyRef.current, puzzleRef.current);
+        if (solution.length === 0) return;
+        setHintMove(solution[0]);
+        engineRef.current.showGuideArrow(solution[0]);
+      }
+    });
+  }, [buildFreshMethodPlanAsync, isBusy, isSolved]);
 
   const handleStepSolveMove = useCallback(() => {
     const engine = engineRef.current;
     if (!engine || isBusy || isSolved) return;
     cubeAudio.playUiTick();
 
-    let plan = activeMethodPlanRef.current;
-    let tracker = playTrackerRef.current;
+    const plan = activeMethodPlanRef.current;
+    const tracker = playTrackerRef.current;
 
     if (
       !plan &&
@@ -1397,19 +1424,27 @@ export default function App() {
     }
 
     if (
-      !plan ||
-      tracker.lastWrongNotation !== null ||
-      tracker.currentIndex >= plan.allMoves.length
+      plan &&
+      tracker.lastWrongNotation === null &&
+      tracker.currentIndex < plan.allMoves.length
     ) {
-      plan = buildFreshMethodPlan(selectedMethodRef.current, false);
-      tracker = playTrackerRef.current;
+      const nextMove = plan.allMoves[tracker.currentIndex];
+      isSteppingMethodRef.current = true;
+      engine.enqueueMove(nextMove, true, 1.0);
+      return;
     }
-    if (!plan || tracker.currentIndex >= plan.allMoves.length) return;
 
-    const nextMove = plan.allMoves[tracker.currentIndex];
-    isSteppingMethodRef.current = true;
-    engine.enqueueMove(nextMove, true, 1.0);
-  }, [buildFreshMethodPlan, isBusy, isSolved]);
+    void buildFreshMethodPlanAsync(selectedMethodRef.current, false).then((freshPlan) => {
+      const activeEngine = engineRef.current;
+      const freshTracker = playTrackerRef.current;
+      if (!activeEngine || !freshPlan || freshTracker.currentIndex >= freshPlan.allMoves.length) {
+        return;
+      }
+      const nextMove = freshPlan.allMoves[freshTracker.currentIndex];
+      isSteppingMethodRef.current = true;
+      activeEngine.enqueueMove(nextMove, true, 1.0);
+    });
+  }, [buildFreshMethodPlanAsync, isBusy, isSolved]);
 
   const handlePauseAutoSolve = useCallback(() => {
     const engine = engineRef.current;
@@ -1434,31 +1469,38 @@ export default function App() {
     if (!engine || isBusy || isSolved) return;
     cubeAudio.playUiTick();
 
-    let plan = activeMethodPlanRef.current;
-    let tracker = playTrackerRef.current;
+    const startAutoSolveWithMoves = (remaining: CubeMove[]) => {
+      const activeEngine = engineRef.current;
+      if (!activeEngine || remaining.length === 0) return;
+      activeEngine.clearGuideArrow();
+      setHintMove(null);
+      isAutoSolvingRef.current = true;
+      setIsAutoSolving(true);
+      setIsBusy(true);
+      activeEngine.enqueueMoves(remaining, 1.55);
+    };
+
+    const plan = activeMethodPlanRef.current;
+    const tracker = playTrackerRef.current;
     const canResumeCurrentPlan =
       plan !== null &&
       plan.methodId === selectedMethodRef.current &&
       tracker.lastWrongNotation === null &&
       tracker.currentIndex < plan.allMoves.length;
 
-    if (!canResumeCurrentPlan) {
-      plan = buildFreshMethodPlan(selectedMethodRef.current, false);
-      tracker = playTrackerRef.current;
+    if (canResumeCurrentPlan && plan) {
+      startAutoSolveWithMoves(plan.allMoves.slice(tracker.currentIndex));
+      return;
     }
 
-    const remaining = plan
-      ? plan.allMoves.slice(tracker.currentIndex)
-      : computeSolutionFromHistory(historyRef.current, puzzleRef.current);
-    if (remaining.length === 0) return;
-
-    engine.clearGuideArrow();
-    setHintMove(null);
-    isAutoSolvingRef.current = true;
-    setIsAutoSolving(true);
-    setIsBusy(true);
-    engine.enqueueMoves(remaining, 1.55);
-  }, [buildFreshMethodPlan, isBusy, isSolved]);
+    void buildFreshMethodPlanAsync(selectedMethodRef.current, false).then((freshPlan) => {
+      const freshTracker = playTrackerRef.current;
+      const remaining = freshPlan
+        ? freshPlan.allMoves.slice(freshTracker.currentIndex)
+        : computeSolutionFromHistory(historyRef.current, puzzleRef.current);
+      startAutoSolveWithMoves(remaining);
+    });
+  }, [buildFreshMethodPlanAsync, isBusy, isSolved]);
 
   const handleResetCube = useCallback(() => {
     const engine = engineRef.current;
@@ -1779,31 +1821,35 @@ export default function App() {
           onSelectPuzzle={handleSelectPuzzle}
           onOpenStopwatch={() => {
             cubeAudio.playUiTick();
-            setTimerModalTab('stopwatch');
+            startTransition(() => setTimerModalTab('stopwatch'));
           }}
           onOpenDashboard={() => {
             cubeAudio.playUiTick();
-            setTimerModalTab('dashboard');
+            startTransition(() => setTimerModalTab('dashboard'));
           }}
           onOpenArena={() => {
             cubeAudio.playUiTick();
-            setTimerModalTab(null);
-            setArenaOpen(true);
+            startTransition(() => {
+              setTimerModalTab(null);
+              setArenaOpen(true);
+            });
           }}
           onOpenSmartHint={() => {
             cubeAudio.playUiTick();
-            setTimerModalTab(null);
-            setSmartHintOpen(true);
+            startTransition(() => {
+              setTimerModalTab(null);
+              setSmartHintOpen(true);
+            });
           }}
           onExportSnapshot={handleExportSnapshot}
           onResetCamera={() => engineRef.current?.resetCamera()}
           onToggleMute={handleToggleMute}
-          onToggleDock={() => setDockCollapsed((p) => !p)}
+          onToggleDock={() => startTransition(() => setDockCollapsed((p) => !p))}
           onToggleShortcuts={() => {
             cubeAudio.playUiTick();
-            setShortcutsOpen((p) => !p);
+            startTransition(() => setShortcutsOpen((p) => !p));
           }}
-          onPause={() => setGameState('paused')}
+          onPause={() => startTransition(() => setGameState('paused'))}
         />
       )}
 
@@ -1820,16 +1866,18 @@ export default function App() {
 
             {/* Keyboard Shortcuts Reference anchored cleanly inside the 3D Stage */}
             {inStudio && shortcutsOpen && gameState === 'playing' && !paletteStudioOpen && timerModalTab === null && (
-              <ShortcutsHelpOverlay
-                theme={theme}
-                puzzleType={puzzleType}
-                isBusy={isBusy}
-                onTryMove={handleManualMove}
-                onClose={() => {
-                  cubeAudio.playUiTick();
-                  setShortcutsOpen(false);
-                }}
-              />
+              <Suspense fallback={null}>
+                <ShortcutsHelpOverlay
+                  theme={theme}
+                  puzzleType={puzzleType}
+                  isBusy={isBusy}
+                  onTryMove={handleManualMove}
+                  onClose={() => {
+                    cubeAudio.playUiTick();
+                    setShortcutsOpen(false);
+                  }}
+                />
+              </Suspense>
             )}
 
             {/* Non-intrusive High-Res Snapshot Confirmation Toast centered in 3D Stage */}
@@ -1911,8 +1959,10 @@ export default function App() {
             recentNotations={recentNotations}
             onSetTab={(tab) => {
               cubeAudio.playUiTick();
-              setActiveTab(tab);
               activeTabRef.current = tab;
+              startTransition(() => {
+                setActiveTab(tab);
+              });
               if (tab === 'learn') {
                 const lessons = CURRICULUM[puzzleType];
                 const current = lessons.find((l) => l.id === activeLessonId) ?? lessons[0];
@@ -1939,14 +1989,16 @@ export default function App() {
                 }
               }
             }}
-            onToggleCollapse={() => setDockCollapsed((p) => !p)}
+            onToggleCollapse={() => startTransition(() => setDockCollapsed((p) => !p))}
             onScramble={handleScramble}
             onUndo={handleUndo}
             onHint={handleHint}
             onOpenSmartHint={() => {
               cubeAudio.playUiTick();
-              setTimerModalTab(null);
-              setSmartHintOpen(true);
+              startTransition(() => {
+                setTimerModalTab(null);
+                setSmartHintOpen(true);
+              });
             }}
             onStepSolveMove={handleStepSolveMove}
             onAutoSolve={handleAutoSolve}
@@ -1964,7 +2016,7 @@ export default function App() {
             onSelectTheme={handleSelectTheme}
             onOpenPaletteStudio={() => {
               cubeAudio.playUiTick();
-              setPaletteStudioOpen(true);
+              startTransition(() => setPaletteStudioOpen(true));
             }}
             onExportSnapshot={handleExportSnapshot}
             onSelectSoundscape={handleSelectSoundscape}
@@ -1981,20 +2033,22 @@ export default function App() {
 
         {/* Figma-Inspired Live Cube Sticker Palette Studio — docks cleanly into the side/bottom panel slot */}
         {inStudio && paletteStudioOpen && (
-          <PaletteStudioModal
-            theme={savedTheme}
-            activeThemeKey={themeKey}
-            customThemes={customThemes}
-            onPreviewPalette={setPreviewPalette}
-            onSaveCustomTheme={handleSaveCustomTheme}
-            onSelectTheme={handleSelectTheme}
-            onDeleteCustomTheme={handleDeleteCustomTheme}
-            onExportSnapshot={handleExportSnapshot}
-            onClose={() => {
-              setPreviewPalette(null);
-              setPaletteStudioOpen(false);
-            }}
-          />
+          <Suspense fallback={null}>
+            <PaletteStudioModal
+              theme={savedTheme}
+              activeThemeKey={themeKey}
+              customThemes={customThemes}
+              onPreviewPalette={setPreviewPalette}
+              onSaveCustomTheme={handleSaveCustomTheme}
+              onSelectTheme={handleSelectTheme}
+              onDeleteCustomTheme={handleDeleteCustomTheme}
+              onExportSnapshot={handleExportSnapshot}
+              onClose={() => {
+                setPreviewPalette(null);
+                setPaletteStudioOpen(false);
+              }}
+            />
+          </Suspense>
         )}
       </div>
 
@@ -2010,105 +2064,108 @@ export default function App() {
         />
       )}
 
-      {/* Pause / Studio Settings Modal */}
-      {gameState === 'paused' && (
-        <PauseModal
-          theme={theme}
-          customThemes={customThemes}
-          solveCount={solveRecords.length}
-          soundscape={soundscape}
-          ambientVolume={ambientVolume}
-          spatialAudioEnabled={spatialAudioEnabled}
-          onResume={() => setGameState('playing')}
-          onRestart={handleResetCube}
-          onSelectTheme={handleSelectTheme}
-          onOpenPaletteStudio={() => {
-            cubeAudio.playUiTick();
-            setGameState('playing');
-            setPaletteStudioOpen(true);
-          }}
-          onSelectSoundscape={handleSelectSoundscape}
-          onAmbientVolumeChange={handleAmbientVolumeChange}
-          onToggleSpatialAudio={handleToggleSpatialAudio}
-          onExportBackupJson={handleExportBackupJson}
-          onImportBackupJson={handleImportBackupJson}
-          onExportSnapshot={handleExportSnapshot}
-          onBackToTitle={() => {
-            engineRef.current?.clearGuideArrow();
-            setGameState('title');
-          }}
-        />
-      )}
+      {/* Lazy-Loaded Non-Initial Modals wrapped cleanly in Suspense */}
+      <Suspense fallback={null}>
+        {/* Pause / Studio Settings Modal */}
+        {gameState === 'paused' && (
+          <PauseModal
+            theme={theme}
+            customThemes={customThemes}
+            solveCount={solveRecords.length}
+            soundscape={soundscape}
+            ambientVolume={ambientVolume}
+            spatialAudioEnabled={spatialAudioEnabled}
+            onResume={() => setGameState('playing')}
+            onRestart={handleResetCube}
+            onSelectTheme={handleSelectTheme}
+            onOpenPaletteStudio={() => {
+              cubeAudio.playUiTick();
+              setGameState('playing');
+              setPaletteStudioOpen(true);
+            }}
+            onSelectSoundscape={handleSelectSoundscape}
+            onAmbientVolumeChange={handleAmbientVolumeChange}
+            onToggleSpatialAudio={handleToggleSpatialAudio}
+            onExportBackupJson={handleExportBackupJson}
+            onImportBackupJson={handleImportBackupJson}
+            onExportSnapshot={handleExportSnapshot}
+            onBackToTitle={() => {
+              engineRef.current?.clearGuideArrow();
+              setGameState('title');
+            }}
+          />
+        )}
 
-      {/* Victory Celebration Modal */}
-      {gameState === 'gameover' && victorySnapshot && (
-        <VictoryModal
-          theme={theme}
-          snapshot={victorySnapshot}
-          onPlayAgain={handleScramble}
-          onOpenLessons={() => {
-            setVictorySnapshot(null);
-            setGameState('playing');
-            setDockCollapsed(false);
-            setActiveTab('learn');
-            handleStageLesson(CURRICULUM[puzzleType][0]);
-          }}
-          onOpenDailyLeaderboard={() => {
-            setVictorySnapshot(null);
-            setGameState('playing');
-            setTimerModalTab('daily');
-          }}
-          onDismiss={() => {
-            setVictorySnapshot(null);
-            setGameState('playing');
-          }}
-        />
-      )}
+        {/* Victory Celebration Modal */}
+        {gameState === 'gameover' && victorySnapshot && (
+          <VictoryModal
+            theme={theme}
+            snapshot={victorySnapshot}
+            onPlayAgain={handleScramble}
+            onOpenLessons={() => {
+              setVictorySnapshot(null);
+              setGameState('playing');
+              setDockCollapsed(false);
+              setActiveTab('learn');
+              handleStageLesson(CURRICULUM[puzzleType][0]);
+            }}
+            onOpenDailyLeaderboard={() => {
+              setVictorySnapshot(null);
+              setGameState('playing');
+              setTimerModalTab('daily');
+            }}
+            onDismiss={() => {
+              setVictorySnapshot(null);
+              setGameState('playing');
+            }}
+          />
+        )}
 
-      {/* Built-in Speedcube Stopwatch, Analytics Dashboard & Daily Challenge Workspace */}
-      {timerModalTab !== null && (
-        <TimerDashboardModal
-          theme={theme}
-          puzzleType={puzzleType}
-          initialTab={timerModalTab}
-          records={solveRecords}
-          customThemesCount={customThemes.length}
-          onClose={() => setTimerModalTab(null)}
-          onSelectPuzzle={handleSelectPuzzle}
-          onAddRecord={handleAddSolveRecord}
-          onUpdatePenalty={handleUpdateSolvePenalty}
-          onUpdateMoves={handleUpdateSolveMoves}
-          onDeleteRecord={handleDeleteSolveRecord}
-          onClearPuzzleRecords={handleClearPuzzleRecords}
-          onRestoreDemoRecords={handleRestoreDemoRecords}
-          onExportBackupJson={handleExportBackupJson}
-          onImportBackupJson={handleImportBackupJson}
-          onApplyScrambleTo3D={handleApplyScrambleTo3D}
-          onPlayDailyIn3D={handlePlayDailyIn3D}
-        />
-      )}
+        {/* Built-in Speedcube Stopwatch, Analytics Dashboard & Daily Challenge Workspace */}
+        {timerModalTab !== null && (
+          <TimerDashboardModal
+            theme={theme}
+            puzzleType={puzzleType}
+            initialTab={timerModalTab}
+            records={solveRecords}
+            customThemesCount={customThemes.length}
+            onClose={() => setTimerModalTab(null)}
+            onSelectPuzzle={handleSelectPuzzle}
+            onAddRecord={handleAddSolveRecord}
+            onUpdatePenalty={handleUpdateSolvePenalty}
+            onUpdateMoves={handleUpdateSolveMoves}
+            onDeleteRecord={handleDeleteSolveRecord}
+            onClearPuzzleRecords={handleClearPuzzleRecords}
+            onRestoreDemoRecords={handleRestoreDemoRecords}
+            onExportBackupJson={handleExportBackupJson}
+            onImportBackupJson={handleImportBackupJson}
+            onApplyScrambleTo3D={handleApplyScrambleTo3D}
+            onPlayDailyIn3D={handlePlayDailyIn3D}
+          />
+        )}
 
-      {/* 1v1 Online Live Speedcubing Competition Arena (Video + Audio + Independent Timers) */}
-      {arenaOpen && (
-        <ArenaModal
-          theme={theme}
-          initialPuzzle={puzzleType}
-          initialRoomCode={arenaInviteRoomCode}
-          onClose={() => {
-            setArenaOpen(false);
-            setArenaInviteRoomCode(null);
-          }}
-        />
-      )}
+        {/* 1v1 Online Live Speedcubing Competition Arena (Video + Audio + Independent Timers) */}
+        {arenaOpen && (
+          <ArenaModal
+            theme={theme}
+            initialPuzzle={puzzleType}
+            initialRoomCode={arenaInviteRoomCode}
+            onClose={() => {
+              setArenaOpen(false);
+              setArenaInviteRoomCode(null);
+            }}
+          />
+        )}
 
-      {/* Smart Hint Physical Rubik's Cube Camera Scanner & Multi-Algorithm Next-Move Advisor */}
-      {smartHintOpen && (
-        <SmartHintModal
-          theme={theme}
-          onClose={() => setSmartHintOpen(false)}
-          onSyncToStudio={handleSyncScannedCubeToStudio}
-        />
-      )}
+        {/* Smart Hint Physical Rubik's Cube Camera Scanner & Multi-Algorithm Next-Move Advisor */}
+        {smartHintOpen && (
+          <SmartHintModal
+            theme={theme}
+            onClose={() => setSmartHintOpen(false)}
+            onSyncToStudio={handleSyncScannedCubeToStudio}
+          />
+        )}
+      </Suspense>
     </main>
   );
 }

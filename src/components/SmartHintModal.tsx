@@ -25,13 +25,9 @@ import {
   applyNotationToScannedFaces,
   buildColorCalibration,
   buildScannedFacesFromScramble,
-  classifyRgbToWcaFace,
-  computeBasicAlgorithmHints,
   createSolvedScannedFaces,
   describeMoveInstruction,
-  recalibrateScannedFaces,
   SAMPLE_SCAN_PRESETS,
-  sampleGridFromRgba,
   SCAN_FACE_ORDER,
   scannedFacesToCubieStates,
   validateScannedCube,
@@ -44,6 +40,11 @@ import {
   type SmartHintOption,
   type WcaFace,
 } from '../cube/cubeScanner';
+import {
+  computeBasicAlgorithmHintsAsync,
+  recalibrateScannedFacesAsync,
+  sampleAndClassifyFaceAsync,
+} from '../cube/cubeWorkerClient';
 import type { CubieState, ThemePalette } from '../cube/types';
 
 interface SmartHintModalProps {
@@ -108,6 +109,7 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
 
   // Solver & Smart Hint state
   const [kociembaLoading, setKociembaLoading] = useState(false);
+  const [basicHintsLoading, setBasicHintsLoading] = useState(false);
   const [kociembaError, setKociembaError] = useState<string | null>(null);
   const [kociembaOption, setKociembaOption] = useState<SmartHintOption | null>(null);
   const [basicOptions, setBasicOptions] = useState<SmartHintOption[]>([]);
@@ -120,6 +122,14 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
   const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const sampleTimerRef = useRef<number | null>(null);
+  const samplingInFlightRef = useRef(false);
+  const recalRequestIdRef = useRef(0);
+  const analyzeRequestIdRef = useRef(0);
+  const isMountedRef = useRef(true);
+  const rawRgbsRef = useRef<ScannedRgbFaces>(rawRgbs);
+  rawRgbsRef.current = rawRgbs;
+  const facesRef = useRef<ScannedFaces>(faces);
+  facesRef.current = faces;
 
   // Progressive color calibration built from whichever physical face centers have been scanned so far
   const liveCalibration = useMemo(() => buildColorCalibration(rawRgbs), [rawRgbs]);
@@ -145,17 +155,19 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       stopCamera();
     };
   }, [stopCamera]);
 
-  // Extract a centered square crop from the active video stream into the offscreen canvas
-  const sampleCurrentVideoFrame = useCallback((): {
+  // Extract a centered square crop from the active video stream into the offscreen canvas,
+  // then offload pixel sampling & CIELAB/HSV color classification to the Web Worker.
+  const sampleCurrentVideoFrame = useCallback(async (): Promise<{
     facesGrid: WcaFace[];
     rgbs: RgbTriplet[];
-    cropDataUrl: string;
-  } | null => {
+  } | null> => {
     const video = videoRef.current;
     if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
       return null;
@@ -182,27 +194,35 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
 
     ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, size, size);
     const imgData = ctx.getImageData(0, 0, size, size);
-    const rgbs = sampleGridFromRgba(imgData.data, size, size, RETICLE_BOX_FRACTION);
-    const facesGrid = rgbs.map((rgb) => classifyRgbToWcaFace(rgb, liveCalibrationRef.current));
+    return sampleAndClassifyFaceAsync(
+      imgData.data,
+      size,
+      size,
+      RETICLE_BOX_FRACTION,
+      liveCalibrationRef.current
+    );
+  }, []);
 
-    // Also render cropped reticle-only JPEG for optional AI Vision Read
+  // Render cropped reticle-only JPEG strictly on demand for optional AI Vision Read
+  const captureVideoCropDataUrl = useCallback((): string | null => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      return null;
+    }
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const minDim = Math.min(vw, vh);
     const cropCanvas = document.createElement('canvas');
     const cropSize = 384;
     cropCanvas.width = cropSize;
     cropCanvas.height = cropSize;
     const cropCtx = cropCanvas.getContext('2d');
-    if (cropCtx) {
-      const boxPx = minDim * (RETICLE_BOX_FRACTION + 0.14);
-      const cx = (vw - boxPx) / 2;
-      const cy = (vh - boxPx) / 2;
-      cropCtx.drawImage(video, cx, cy, boxPx, boxPx, 0, 0, cropSize, cropSize);
-    }
-
-    return {
-      facesGrid,
-      rgbs,
-      cropDataUrl: cropCanvas.toDataURL('image/jpeg', 0.82),
-    };
+    if (!cropCtx) return null;
+    const boxPx = minDim * (RETICLE_BOX_FRACTION + 0.14);
+    const cx = (vw - boxPx) / 2;
+    const cy = (vh - boxPx) / 2;
+    cropCtx.drawImage(video, cx, cy, boxPx, boxPx, 0, 0, cropSize, cropSize);
+    return cropCanvas.toDataURL('image/jpeg', 0.82);
   }, []);
 
   const startCamera = useCallback(
@@ -235,12 +255,20 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
         }
         setCameraActive(true);
 
-        // Live 6Hz color sampling preview inside the 3x3 reticle
+        // Live 6Hz color sampling preview inside the 3x3 reticle (offloaded to Web Worker)
         sampleTimerRef.current = window.setInterval(() => {
-          const result = sampleCurrentVideoFrame();
-          if (result) {
-            setLivePreview(result.facesGrid);
-          }
+          if (samplingInFlightRef.current) return;
+          samplingInFlightRef.current = true;
+          void sampleCurrentVideoFrame()
+            .then((result) => {
+              if (result && isMountedRef.current && streamRef.current) {
+                setLivePreview(result.facesGrid);
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              samplingInFlightRef.current = false;
+            });
         }, 170);
       } catch (err: unknown) {
         const msg =
@@ -284,21 +312,27 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
       // Lock center sticker to canonical face slot
       normalized[4] = targetFace;
 
+      const updatedFaces: ScannedFaces = { ...facesRef.current, [targetFace]: normalized };
+      facesRef.current = updatedFaces;
+      setFaces(updatedFaces);
+
       if (rgbs) {
-        setRawRgbs((prevRgbs) => {
-          const nextRgbs: ScannedRgbFaces = { ...prevRgbs, [targetFace]: rgbs };
-          const sampledFacesCount = SCAN_FACE_ORDER.filter((f) => Boolean(nextRgbs[f])).length;
-          setFaces((prevFaces) => {
-            const updatedFaces = { ...prevFaces, [targetFace]: normalized };
-            // Progressively recalibrate as soon as 2+ centers are scanned (and balance 9/9 once all 6 are captured)
-            return sampledFacesCount >= 2
-              ? recalibrateScannedFaces(nextRgbs, updatedFaces)
-              : updatedFaces;
-          });
-          return nextRgbs;
-        });
-      } else {
-        setFaces((prev) => ({ ...prev, [targetFace]: normalized }));
+        const nextRgbs: ScannedRgbFaces = { ...rawRgbsRef.current, [targetFace]: rgbs };
+        rawRgbsRef.current = nextRgbs;
+        setRawRgbs(nextRgbs);
+
+        const sampledFacesCount = SCAN_FACE_ORDER.filter((f) => Boolean(nextRgbs[f])).length;
+        // Progressively recalibrate in the Web Worker as soon as 2+ centers are scanned
+        if (sampledFacesCount >= 2) {
+          const reqId = ++recalRequestIdRef.current;
+          void recalibrateScannedFacesAsync(nextRgbs, updatedFaces)
+            .then((recalibrated) => {
+              if (!isMountedRef.current || recalRequestIdRef.current !== reqId) return;
+              facesRef.current = recalibrated;
+              setFaces(recalibrated);
+            })
+            .catch(() => {});
+        }
       }
       setCapturedFaces((prev) => {
         const nextMap = { ...prev, [targetFace]: true };
@@ -309,8 +343,10 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
     [advanceToNextFace]
   );
 
-  const handleCaptureFace = () => {
-    const sampled = sampleCurrentVideoFrame();
+  const handleCaptureFace = async () => {
+    const targetFace = activeFace;
+    const sampled = await sampleCurrentVideoFrame();
+    if (!isMountedRef.current) return;
     if (!sampled) {
       setCameraError('Camera stream is warming up. Wait a moment and tap Capture again.');
       return;
@@ -318,9 +354,9 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
     cubeAudio.playUiTick();
     setAiStatusMsg({
       ok: true,
-      text: `Captured ${WCA_FACE_META[activeFace].title} face via real-time CIELAB color sampling.`,
+      text: `Captured ${WCA_FACE_META[targetFace].title} face via real-time CIELAB color sampling.`,
     });
-    commitCapturedFace(activeFace, sampled.facesGrid, sampled.rgbs);
+    commitCapturedFace(targetFace, sampled.facesGrid, sampled.rgbs);
   };
 
   const handleUploadPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -328,6 +364,7 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
     e.target.value = '';
     if (!file) return;
 
+    const targetFace = activeFace;
     stopCamera();
     setCameraError(null);
     setAiStatusMsg(null);
@@ -351,19 +388,26 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
         const sy = (img.height - minDim) / 2;
         ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
         const imgData = ctx.getImageData(0, 0, size, size);
-        const sampledRgbs = sampleGridFromRgba(imgData.data, size, size, RETICLE_BOX_FRACTION);
-        const sampledFaces = sampledRgbs.map((rgb) =>
-          classifyRgbToWcaFace(rgb, liveCalibrationRef.current)
-        );
         const compressedBase64 = canvas.toDataURL('image/jpeg', 0.84);
         setUploadedBase64(compressedBase64);
 
-        cubeAudio.playUiTick();
-        commitCapturedFace(activeFace, sampledFaces, sampledRgbs);
-        setAiStatusMsg({
-          ok: true,
-          text: `Sampled ${WCA_FACE_META[activeFace].title} from uploaded photo. Tap any sticker on the net to fine-tune, or run AI Vision Read.`,
-        });
+        void sampleAndClassifyFaceAsync(
+          imgData.data,
+          size,
+          size,
+          RETICLE_BOX_FRACTION,
+          liveCalibrationRef.current
+        )
+          .then(({ rgbs: sampledRgbs, facesGrid: sampledFaces }) => {
+            if (!isMountedRef.current) return;
+            cubeAudio.playUiTick();
+            commitCapturedFace(targetFace, sampledFaces, sampledRgbs);
+            setAiStatusMsg({
+              ok: true,
+              text: `Sampled ${WCA_FACE_META[targetFace].title} from uploaded photo. Tap any sticker on the net to fine-tune, or run AI Vision Read.`,
+            });
+          })
+          .catch(() => {});
       };
       img.src = dataUrl;
     };
@@ -374,8 +418,7 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
     if (aiScanning) return;
     let imageDataUrl: string | null = null;
     if (cameraActive) {
-      const frame = sampleCurrentVideoFrame();
-      imageDataUrl = frame?.cropDataUrl ?? null;
+      imageDataUrl = captureVideoCropDataUrl();
     } else if (uploadedBase64) {
       imageDataUrl = uploadedBase64;
     }
@@ -430,11 +473,20 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
     const sampledCount = Object.keys(rawRgbs).length;
     if (sampledCount === 0) return;
     cubeAudio.playUiTick();
-    setFaces((prev) => recalibrateScannedFaces(rawRgbs, prev));
-    setAiStatusMsg({
-      ok: true,
-      text: `Auto-balanced colors using ${sampledCount} scanned center reference${sampledCount === 1 ? '' : 's'}.`,
-    });
+    const reqId = ++recalRequestIdRef.current;
+    const currentRgbs = rawRgbsRef.current;
+    const currentFaces = facesRef.current;
+    void recalibrateScannedFacesAsync(currentRgbs, currentFaces)
+      .then((recalibrated) => {
+        if (!isMountedRef.current || recalRequestIdRef.current !== reqId) return;
+        facesRef.current = recalibrated;
+        setFaces(recalibrated);
+        setAiStatusMsg({
+          ok: true,
+          text: `Auto-balanced colors using ${sampledCount} scanned center reference${sampledCount === 1 ? '' : 's'}.`,
+        });
+      })
+      .catch(() => {});
   };
 
   const handleApplySamplePreset = (scramble: string, label: string) => {
@@ -468,26 +520,39 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
     setCapturedFaces((prev) => ({ ...prev, [face]: true }));
   };
 
-  // Run both Kociemba Two-Phase Optimal Solver (server) + 4 Local Basic Algorithms (CFOP, Beginner, Roux, ZZ)
+  // Run both Kociemba Two-Phase Optimal Solver (server) + 4 Local Basic Algorithms (CFOP, Beginner, Roux, ZZ) in Web Worker
   const handleAnalyzeCube = async () => {
     if (!validation.valid || validation.isSolved) return;
     cubeAudio.playUiTick();
     stopCamera();
 
+    const reqId = ++analyzeRequestIdRef.current;
     const snapshotFaces = cloneScannedFaces(faces);
     setSolutionBaseFaces(snapshotFaces);
     setCurrentStepIdx(0);
     setKociembaError(null);
     setKociembaOption(null);
-
-    // 1. Compute all 4 local algorithms immediately (zero latency!)
-    const cubies = scannedFacesToCubieStates(snapshotFaces);
-    const localHints = computeBasicAlgorithmHints(cubies);
-    setBasicOptions(localHints);
+    setBasicOptions([]);
     setSelectedAlgoId('kociemba');
     setActiveView('solution');
 
-    // 2. Request Kociemba Two-Phase Optimal solve from server
+    // 1. Offload all 4 local algorithms (CFOP, Beginner, Roux, ZZ) to the Web Worker so button press paints immediately
+    setBasicHintsLoading(true);
+    const cubies = scannedFacesToCubieStates(snapshotFaces);
+    const localHintsPromise = computeBasicAlgorithmHintsAsync(cubies)
+      .then((localHints) => {
+        if (!isMountedRef.current || analyzeRequestIdRef.current !== reqId) return localHints;
+        setBasicOptions(localHints);
+        return localHints;
+      })
+      .catch(() => [] as SmartHintOption[])
+      .finally(() => {
+        if (isMountedRef.current && analyzeRequestIdRef.current === reqId) {
+          setBasicHintsLoading(false);
+        }
+      });
+
+    // 2. Request Kociemba Two-Phase Optimal solve from server concurrently
     setKociembaLoading(true);
     try {
       const res = await fetch(buildApiUrl('/api/smart-hint/solve'), {
@@ -496,10 +561,13 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
         body: JSON.stringify({ facelets: validation.facelets }),
       });
       const data = await res.json();
+      if (!isMountedRef.current || analyzeRequestIdRef.current !== reqId) return;
       if (!res.ok) {
         setKociembaError(data.error || 'Kociemba solver could not solve this state.');
-        // Switch automatically to CFOP if Kociemba failed
-        if (localHints.length > 0) setSelectedAlgoId(localHints[0].id);
+        const localHints = await localHintsPromise;
+        if (isMountedRef.current && analyzeRequestIdRef.current === reqId && localHints.length > 0) {
+          setSelectedAlgoId(localHints[0].id);
+        }
       } else {
         const moves: string[] = Array.isArray(data.moves) ? data.moves : [];
         setKociembaOption({
@@ -515,10 +583,16 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
         });
       }
     } catch {
+      if (!isMountedRef.current || analyzeRequestIdRef.current !== reqId) return;
       setKociembaError('Kociemba server unreachable — showing local CFOP, Beginner, Roux & ZZ solutions.');
-      if (localHints.length > 0) setSelectedAlgoId(localHints[0].id);
+      const localHints = await localHintsPromise;
+      if (isMountedRef.current && analyzeRequestIdRef.current === reqId && localHints.length > 0) {
+        setSelectedAlgoId(localHints[0].id);
+      }
     } finally {
-      setKociembaLoading(false);
+      if (isMountedRef.current && analyzeRequestIdRef.current === reqId) {
+        setKociembaLoading(false);
+      }
     }
   };
 
@@ -591,8 +665,7 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4"
       style={{
-        backgroundColor: theme.isDark ? 'rgba(8, 10, 16, 0.78)' : 'rgba(24, 24, 27, 0.48)',
-        backdropFilter: 'blur(8px)',
+        backgroundColor: theme.isDark ? 'rgba(8, 10, 16, 0.84)' : 'rgba(18, 20, 26, 0.56)',
       }}
       role="dialog"
       aria-modal="true"
@@ -1328,7 +1401,7 @@ export const SmartHintModal: React.FC<SmartHintModalProps> = ({
                   borderColor: theme.ui.accent,
                 }}
               >
-                {kociembaLoading && !activeOption ? (
+                {(kociembaLoading || basicHintsLoading) && !activeOption ? (
                   <div className="flex items-center gap-3 py-4">
                     <Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.ui.accent }} />
                     <div>

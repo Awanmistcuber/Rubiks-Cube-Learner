@@ -62,7 +62,8 @@ export interface UseArenaClientResult {
   // Media & WebRTC state
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
-  remoteFallbackFrame: string | null;
+  hasRemoteFallbackFrame: boolean;
+  subscribeRemoteFallbackFrame: (listener: (dataUrl: string | null) => void) => () => void;
   camEnabled: boolean;
   micEnabled: boolean;
   remoteAudioMuted: boolean;
@@ -114,7 +115,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
   // Media & WebRTC
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [remoteFallbackFrame, setRemoteFallbackFrame] = useState<string | null>(null);
+  const [hasRemoteFallbackFrame, setHasRemoteFallbackFrame] = useState(false);
   const [camEnabled, setCamEnabled] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
   const [remoteAudioMuted, setRemoteAudioMuted] = useState(() => cubeAudio.isMuted());
@@ -133,6 +134,53 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
   const playerIdRef = useRef<string | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const camEnabledRef = useRef(false);
+  const remoteFallbackFrameRef = useRef<string | null>(null);
+  const fallbackFrameListenersRef = useRef<Set<(dataUrl: string | null) => void>>(new Set());
+
+  const publishRemoteFallbackFrame = useCallback((nextFrame: string | null) => {
+    const hadFrame = remoteFallbackFrameRef.current !== null;
+    const hasFrame = nextFrame !== null;
+    remoteFallbackFrameRef.current = nextFrame;
+    if (hadFrame !== hasFrame) {
+      setHasRemoteFallbackFrame(hasFrame);
+    }
+    for (const listener of fallbackFrameListenersRef.current) {
+      listener(nextFrame);
+    }
+  }, []);
+
+  const subscribeRemoteFallbackFrame = useCallback(
+    (listener: (dataUrl: string | null) => void) => {
+      fallbackFrameListenersRef.current.add(listener);
+      // Sync immediately with latest frame if already present
+      if (remoteFallbackFrameRef.current !== null) {
+        listener(remoteFallbackFrameRef.current);
+      }
+      return () => {
+        fallbackFrameListenersRef.current.delete(listener);
+      };
+    },
+    []
+  );
+
+  const updateClockOffsetIfMeaningful = useCallback((nextOffsetMs: number) => {
+    setServerClockOffsetMs((prev) =>
+      Math.abs(nextOffsetMs - prev) >= 30 ? nextOffsetMs : prev
+    );
+  }, []);
+
+  const updateQueueCountsIfChanged = useCallback((nextCounts: Record<PuzzleType, number>) => {
+    setQueueCounts((prev) =>
+      prev['2x2'] === nextCounts['2x2'] &&
+      prev['3x3'] === nextCounts['3x3'] &&
+      prev['4x4'] === nextCounts['4x4'] &&
+      prev.mirror === nextCounts.mirror
+        ? prev
+        : nextCounts
+    );
+  }, []);
+
+  const clearError = useCallback(() => setErrorMessage(null), []);
   const micEnabledRef = useRef(false);
   const selectedMicIdRef = useRef<string>('default');
   const selectedSpeakerIdRef = useRef<string>('default');
@@ -195,9 +243,9 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     pendingIceRef.current = [];
     remoteTracksRef.current.clear();
     setRemoteStream(null);
-    setRemoteFallbackFrame(null);
+    publishRemoteFallbackFrame(null);
     setWebrtcStatus('idle');
-  }, []);
+  }, [publishRemoteFallbackFrame]);
 
   const stopLocalMedia = useCallback(() => {
     const stream = localStreamRef.current;
@@ -932,17 +980,17 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
           case 'welcome': {
             setPlayerId(msg.playerId);
             playerIdRef.current = msg.playerId;
-            setQueueCounts(msg.queueCounts);
+            updateQueueCountsIfChanged(msg.queueCounts);
             break;
           }
           case 'queue:status': {
             setQueuedPuzzle(msg.queued ? msg.puzzleType : null);
             setQueueSize(msg.queueSize);
-            setQueueCounts(msg.queueCounts);
+            updateQueueCountsIfChanged(msg.queueCounts);
             break;
           }
           case 'room:state': {
-            setServerClockOffsetMs(msg.room.serverTimeMs - Date.now());
+            updateClockOffsetIfMeaningful(msg.room.serverTimeMs - Date.now());
             setRoom(msg.room);
             setQueuedPuzzle(null);
             setErrorMessage(null);
@@ -966,7 +1014,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
               closePeerConnection();
             } else {
               if (!peer.camEnabled) {
-                setRemoteFallbackFrame(null);
+                publishRemoteFallbackFrame(null);
               }
               if (activePeerIdRef.current !== peer.playerId) {
                 // Deterministic WebRTC initiation: seat 0 creates offer, seat 1 answers politely
@@ -990,7 +1038,8 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
           }
           case 'webrtc:frame': {
             if (msg.fromPlayerId === activePeerIdRef.current && typeof msg.dataUrl === 'string') {
-              setRemoteFallbackFrame(msg.dataUrl);
+              // Real-time direct DOM frame dispatch (zero React re-renders per frame)
+              publishRemoteFallbackFrame(msg.dataUrl);
             }
             break;
           }
@@ -999,7 +1048,7 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
             break;
           }
           case 'pong': {
-            setServerClockOffsetMs(msg.serverTimeMs - Date.now());
+            updateClockOffsetIfMeaningful(msg.serverTimeMs - Date.now());
             break;
           }
         }
@@ -1167,11 +1216,12 @@ export function useArenaClient(active: boolean): UseArenaClientResult {
     queueSize,
     queueCounts,
     errorMessage,
-    clearError: () => setErrorMessage(null),
+    clearError,
     serverClockOffsetMs,
     localStream,
     remoteStream,
-    remoteFallbackFrame,
+    hasRemoteFallbackFrame,
+    subscribeRemoteFallbackFrame,
     camEnabled,
     micEnabled,
     remoteAudioMuted,
