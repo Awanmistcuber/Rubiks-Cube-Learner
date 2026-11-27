@@ -8,6 +8,8 @@ import {
   evaluateSequenceMove,
   getNextExpectedToken,
   parseNotationSequenceInput,
+  restoreSequenceHalfTurn,
+  stepBackSequence,
 } from './sequenceTracker.ts';
 
 test('evaluateSequenceMove marks correct moves green and advances immediately', () => {
@@ -80,3 +82,33 @@ test('advanceSequenceStep marks step correct and advances cursor', () => {
   assert.equal(tracker.currentIndex, 1);
   assert.deepEqual(tracker.statuses, ['correct', 'pending']);
 });
+
+test('stepBackSequence and restoreSequenceHalfTurn trace back cleanly without losing notation steps', () => {
+  let tracker = createSequenceTracker(['D2', 'U2', 'R']);
+  tracker = advanceSequenceStep(tracker);
+  tracker = advanceSequenceStep(tracker);
+  assert.equal(tracker.currentIndex, 2);
+  assert.deepEqual(tracker.statuses, ['correct', 'correct', 'pending']);
+
+  // Undo step 2 -> returns cleanly to index 1 with all 3 tokens preserved
+  tracker = stepBackSequence(tracker);
+  assert.equal(tracker.currentIndex, 1);
+  assert.deepEqual(tracker.tokens, ['D2', 'U2', 'R']);
+  assert.deepEqual(tracker.statuses, ['correct', 'pending', 'pending']);
+  assert.equal(getNextExpectedToken(tracker), 'U2');
+
+  // Undo step 1 -> returns cleanly to index 0 with D2 active again
+  tracker = stepBackSequence(tracker);
+  assert.equal(tracker.currentIndex, 0);
+  assert.deepEqual(tracker.tokens, ['D2', 'U2', 'R']);
+  assert.deepEqual(tracker.statuses, ['pending', 'pending', 'pending']);
+  assert.equal(getNextExpectedToken(tracker), 'D2');
+
+  // Half-turn undo restores halfTurnDirection cleanly
+  tracker = evaluateSequenceMove(tracker, parseNotation('D', '3x3')!, '3x3');
+  assert.ok(tracker.halfTurnDirection !== null);
+  tracker = restoreSequenceHalfTurn(tracker, null);
+  assert.equal(tracker.halfTurnDirection, null);
+  assert.equal(tracker.currentIndex, 0);
+});
+

@@ -24,6 +24,7 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
+  overflow: clip;
   overscroll-behavior: none;
   font-family: var(--font-sans);
   background-color: var(--kubi-bg);
@@ -77,6 +78,7 @@ body,
   min-width: 0;
   width: 100%;
   overflow: hidden;
+  overflow: clip;
 }
 
 .kubi-studio-panel {
@@ -86,6 +88,7 @@ body,
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  overflow: clip;
   border-top-width: 1px;
   border-left-width: 0px;
 }

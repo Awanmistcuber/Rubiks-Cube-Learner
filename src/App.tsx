@@ -54,6 +54,8 @@ import {
   evaluateSequenceMove,
   getNextExpectedToken,
   parseNotationSequenceInput,
+  restoreSequenceHalfTurn,
+  stepBackSequence,
   type SequenceTrackerState,
 } from './cube/sequenceTracker';
 import {
@@ -84,6 +86,14 @@ import type {
   SolveSnapshot,
   ThemePalette,
 } from './cube/types';
+
+interface UndoEntry {
+  move: CubeMove;
+  trackerScope: 'play' | 'learn' | 'none';
+  trackerAction: 'advance' | 'wrong' | 'half' | 'none';
+  prevHalfTurnDirection: 1 | -1 | null;
+  trackerEpoch: number;
+}
 
 function readBestTime(puzzle: PuzzleType): number | null {
   try {
@@ -201,9 +211,14 @@ export default function App() {
   );
   const [playTrackerLabel, setPlayTrackerLabel] = useState<string>('Sequence');
   const [hasLastScramble, setHasLastScramble] = useState(false);
+  const [undoDepth, setUndoDepth] = useState(0);
 
   // Mutable refs for 60Hz engine callbacks (never tear down WebGL!)
   const historyRef = useRef<CubeMove[]>([]);
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const pendingUndoMapRef = useRef<WeakMap<CubeMove, UndoEntry>>(new WeakMap());
+  const playTrackerEpochRef = useRef<number>(0);
+  const learnTrackerEpochRef = useRef<number>(0);
   const currentScrambleRef = useRef<string>('');
   const lastScrambleTokensRef = useRef<string[]>([]);
   const selectedMethodRef = useRef<SolveMethodId>(selectedMethod);
@@ -211,7 +226,6 @@ export default function App() {
   const lessonTrackerRef = useRef<SequenceTrackerState>(lessonTracker);
   const playTrackerRef = useRef<SequenceTrackerState>(playTracker);
   const playTrackerLabelRef = useRef<string>(playTrackerLabel);
-  const isUndoingWrongRef = useRef<boolean>(false);
   const isSteppingMethodRef = useRef<boolean>(false);
   const activeDailyRef = useRef<{ dateKey: string; puzzleType: PuzzleType; scramble: string } | null>(null);
   const timerModalOpenRef = useRef<boolean>(false);
@@ -327,30 +341,103 @@ export default function App() {
           historyRef.current = nextHistory;
           setRecentNotations(nextHistory.slice(-24).map((m) => m.notation));
 
+          const undoEntry = pendingUndoMapRef.current.get(move);
+          if (undoEntry) {
+            pendingUndoMapRef.current.delete(move);
+          }
+
           if (!isScramblingRef.current) {
-            if (!isFromQueue || isAutoSolvingRef.current) {
-              moveCountRef.current += 1;
+            if (undoEntry) {
+              moveCountRef.current = Math.max(0, moveCountRef.current - 1);
               setMoveCount(moveCountRef.current);
-            }
-            if (hasScrambledRef.current && !timerRunningRef.current && !solvedNow) {
-              timerRunningRef.current = true;
-              timerStartRef.current = performance.now();
+            } else {
+              if (!isFromQueue || isAutoSolvingRef.current || isSteppingMethodRef.current) {
+                moveCountRef.current += 1;
+                setMoveCount(moveCountRef.current);
+              }
+              if (hasScrambledRef.current && !timerRunningRef.current && !solvedNow) {
+                timerRunningRef.current = true;
+                timerStartRef.current = performance.now();
+              }
             }
           }
 
           setIsSolved(solvedNow);
 
-          // Live sequence & method-flow tracking in Learn, Play & Solve, and Auto-Solve!
+          // Live sequence & method-flow tracking in Learn, Play & Solve, Auto-Solve, and Undo!
           let handledGuideArrow = false;
-          if (
+          if (!isScramblingRef.current && undoEntry) {
+            isSteppingMethodRef.current = false;
+            if (
+              undoEntry.trackerScope === 'play' &&
+              undoEntry.trackerEpoch === playTrackerEpochRef.current &&
+              playTrackerRef.current.tokens.length > 0
+            ) {
+              let nextTracker = playTrackerRef.current;
+              if (undoEntry.trackerAction === 'advance') {
+                nextTracker = stepBackSequence(nextTracker, undoEntry.prevHalfTurnDirection);
+              } else if (undoEntry.trackerAction === 'wrong') {
+                nextTracker = clearSequenceWrongState(nextTracker);
+              } else if (undoEntry.trackerAction === 'half') {
+                nextTracker = restoreSequenceHalfTurn(nextTracker, undoEntry.prevHalfTurnDirection);
+              }
+              playTrackerRef.current = nextTracker;
+              setPlayTracker(nextTracker);
+
+              const nextToken = getNextExpectedToken(nextTracker);
+              if (nextToken) {
+                const nextMove = parseNotation(nextToken, puzzleRef.current);
+                setHintMove(nextMove);
+                if (playTrackerLabelRef.current !== 'Solve Guide' || activeMethodPlanRef.current !== null) {
+                  engine.showGuideArrow(nextMove);
+                }
+              } else {
+                setHintMove(null);
+                engine.clearGuideArrow();
+              }
+              handledGuideArrow = true;
+            } else if (
+              undoEntry.trackerScope === 'learn' &&
+              undoEntry.trackerEpoch === learnTrackerEpochRef.current &&
+              lessonTrackerRef.current.tokens.length > 0
+            ) {
+              let nextTracker = lessonTrackerRef.current;
+              if (undoEntry.trackerAction === 'advance') {
+                nextTracker = stepBackSequence(nextTracker, undoEntry.prevHalfTurnDirection);
+              } else if (undoEntry.trackerAction === 'wrong') {
+                nextTracker = clearSequenceWrongState(nextTracker);
+              } else if (undoEntry.trackerAction === 'half') {
+                nextTracker = restoreSequenceHalfTurn(nextTracker, undoEntry.prevHalfTurnDirection);
+              }
+              lessonTrackerRef.current = nextTracker;
+              setLessonTracker(nextTracker);
+
+              const nextToken = getNextExpectedToken(nextTracker);
+              if (nextToken) {
+                const nextMove = parseNotation(nextToken, puzzleRef.current);
+                setHintMove(nextMove);
+                engine.showGuideArrow(nextMove);
+              } else {
+                setHintMove(null);
+                engine.clearGuideArrow();
+              }
+              handledGuideArrow = true;
+            }
+          } else if (
             !isScramblingRef.current &&
             (isAutoSolvingRef.current ||
               isSteppingMethodRef.current ||
               (isFromQueue && activeTabRef.current === 'play' && activeMethodPlanRef.current !== null))
           ) {
             isSteppingMethodRef.current = false;
+            let trackerAction: UndoEntry['trackerAction'] = 'none';
+            let prevHalf: 1 | -1 | null = null;
             if (playTrackerRef.current.tokens.length > 0) {
+              prevHalf = playTrackerRef.current.halfTurnDirection;
               const nextTracker = advanceSequenceStep(playTrackerRef.current);
+              if (nextTracker.currentIndex > playTrackerRef.current.currentIndex) {
+                trackerAction = 'advance';
+              }
               playTrackerRef.current = nextTracker;
               setPlayTracker(nextTracker);
 
@@ -367,14 +454,47 @@ export default function App() {
                 handledGuideArrow = true;
               }
             }
+            undoStackRef.current = [
+              ...undoStackRef.current,
+              {
+                move,
+                trackerScope: trackerAction === 'none' ? 'none' : 'play',
+                trackerAction,
+                prevHalfTurnDirection: prevHalf,
+                trackerEpoch: playTrackerEpochRef.current,
+              },
+            ];
+            setUndoDepth(undoStackRef.current.length);
           } else if (!isFromQueue && !isScramblingRef.current) {
+            let entry: UndoEntry = {
+              move,
+              trackerScope: 'none',
+              trackerAction: 'none',
+              prevHalfTurnDirection: null,
+              trackerEpoch: 0,
+            };
+
             if (activeTabRef.current === 'learn' && lessonTrackerRef.current.tokens.length > 0) {
-              const nextTracker = isUndoingWrongRef.current
-                ? clearSequenceWrongState(lessonTrackerRef.current)
-                : evaluateSequenceMove(lessonTrackerRef.current, move, puzzleRef.current);
-              isUndoingWrongRef.current = false;
+              const prevTracker = lessonTrackerRef.current;
+              const nextTracker = evaluateSequenceMove(prevTracker, move, puzzleRef.current);
               lessonTrackerRef.current = nextTracker;
               setLessonTracker(nextTracker);
+
+              const action: UndoEntry['trackerAction'] =
+                nextTracker.currentIndex > prevTracker.currentIndex
+                  ? 'advance'
+                  : nextTracker.lastWrongNotation !== null
+                    ? 'wrong'
+                    : nextTracker.halfTurnDirection !== prevTracker.halfTurnDirection
+                      ? 'half'
+                      : 'none';
+              entry = {
+                move,
+                trackerScope: 'learn',
+                trackerAction: action,
+                prevHalfTurnDirection: prevTracker.halfTurnDirection,
+                trackerEpoch: learnTrackerEpochRef.current,
+              };
 
               const nextToken = getNextExpectedToken(nextTracker);
               if (nextToken) {
@@ -387,12 +507,26 @@ export default function App() {
               }
               handledGuideArrow = true;
             } else if (activeTabRef.current === 'play' && playTrackerRef.current.tokens.length > 0) {
-              const nextTracker = isUndoingWrongRef.current
-                ? clearSequenceWrongState(playTrackerRef.current)
-                : evaluateSequenceMove(playTrackerRef.current, move, puzzleRef.current);
-              isUndoingWrongRef.current = false;
+              const prevTracker = playTrackerRef.current;
+              const nextTracker = evaluateSequenceMove(prevTracker, move, puzzleRef.current);
               playTrackerRef.current = nextTracker;
               setPlayTracker(nextTracker);
+
+              const action: UndoEntry['trackerAction'] =
+                nextTracker.currentIndex > prevTracker.currentIndex
+                  ? 'advance'
+                  : nextTracker.lastWrongNotation !== null
+                    ? 'wrong'
+                    : nextTracker.halfTurnDirection !== prevTracker.halfTurnDirection
+                      ? 'half'
+                      : 'none';
+              entry = {
+                move,
+                trackerScope: 'play',
+                trackerAction: action,
+                prevHalfTurnDirection: prevTracker.halfTurnDirection,
+                trackerEpoch: playTrackerEpochRef.current,
+              };
 
               // Auto-advance the 3D guide arrow for active method plans, tracked sequences, & scramble practice
               const nextToken = getNextExpectedToken(nextTracker);
@@ -407,9 +541,22 @@ export default function App() {
                 engine.clearGuideArrow();
               }
               handledGuideArrow = true;
-            } else {
-              isUndoingWrongRef.current = false;
             }
+
+            undoStackRef.current = [...undoStackRef.current, entry];
+            setUndoDepth(undoStackRef.current.length);
+          } else if (!isScramblingRef.current) {
+            undoStackRef.current = [
+              ...undoStackRef.current,
+              {
+                move,
+                trackerScope: 'none',
+                trackerAction: 'none',
+                prevHalfTurnDirection: null,
+                trackerEpoch: 0,
+              },
+            ];
+            setUndoDepth(undoStackRef.current.length);
           }
 
           // Clear standalone hint arrow once the cube is solved
@@ -533,6 +680,9 @@ export default function App() {
             isScramblingRef.current = false;
             hasScrambledRef.current = !solvedNow;
             setHasScrambled(!solvedNow);
+            undoStackRef.current = [];
+            pendingUndoMapRef.current = new WeakMap();
+            setUndoDepth(0);
             moveCountRef.current = 0;
             setMoveCount(0);
             elapsedAccumRef.current = 0;
@@ -548,6 +698,7 @@ export default function App() {
               );
               activeMethodPlanRef.current = plan;
               setActiveMethodPlan(plan);
+              playTrackerEpochRef.current += 1;
               const nextPlayTracker = createSequenceTracker(plan.allMoves.map((m) => m.notation));
               playTrackerRef.current = nextPlayTracker;
               setPlayTracker(nextPlayTracker);
@@ -598,6 +749,11 @@ export default function App() {
 
   const resetProgressTrackers = useCallback(() => {
     historyRef.current = [];
+    undoStackRef.current = [];
+    pendingUndoMapRef.current = new WeakMap();
+    playTrackerEpochRef.current += 1;
+    learnTrackerEpochRef.current += 1;
+    setUndoDepth(0);
     setRecentNotations([]);
     moveCountRef.current = 0;
     setMoveCount(0);
@@ -611,7 +767,6 @@ export default function App() {
     isScramblingRef.current = false;
     isAutoSolvingRef.current = false;
     setIsAutoSolving(false);
-    isUndoingWrongRef.current = false;
     isSteppingMethodRef.current = false;
     setIsBusy(false);
 
@@ -1012,21 +1167,15 @@ export default function App() {
 
   const handleUndo = useCallback(() => {
     const engine = engineRef.current;
-    if (!engine || isBusy || historyRef.current.length === 0) return;
-    const last = historyRef.current[historyRef.current.length - 1];
-    const inv = invertMove(last);
+    if (!engine || isBusy || undoStackRef.current.length === 0) return;
+    cubeAudio.playUiTick();
+    const entry = undoStackRef.current[undoStackRef.current.length - 1];
+    undoStackRef.current = undoStackRef.current.slice(0, -1);
+    setUndoDepth(undoStackRef.current.length);
+    const inv = invertMove(entry.move);
+    pendingUndoMapRef.current.set(inv, entry);
 
-    const activeTracker =
-      activeTabRef.current === 'learn'
-        ? lessonTrackerRef.current
-        : activeTabRef.current === 'play'
-          ? playTrackerRef.current
-          : null;
-
-    if (activeTracker && activeTracker.lastWrongNotation !== null) {
-      isUndoingWrongRef.current = true;
-    } else {
-      isUndoingWrongRef.current = false;
+    if (entry.trackerScope === 'none') {
       engine.clearGuideArrow();
       setHintMove(null);
     }
@@ -1049,6 +1198,7 @@ export default function App() {
       cubeAudio.playUiTick();
       activeMethodPlanRef.current = null;
       setActiveMethodPlan(null);
+      playTrackerEpochRef.current += 1;
       const next = createSequenceTracker(tokens);
       playTrackerRef.current = next;
       setPlayTracker(next);
@@ -1079,6 +1229,7 @@ export default function App() {
     lastScrambleTokensRef.current = tokens;
     setHasLastScramble(true);
 
+    playTrackerEpochRef.current += 1;
     const next = createSequenceTracker(tokens);
     playTrackerRef.current = next;
     setPlayTracker(next);
@@ -1093,6 +1244,7 @@ export default function App() {
   const handleResetPlayTracker = useCallback(() => {
     if (playTrackerRef.current.tokens.length === 0) return;
     cubeAudio.playUiTick();
+    playTrackerEpochRef.current += 1;
     if (activeMethodPlanRef.current && engineRef.current) {
       // Re-plan cleanly from the live 3D state for the active method!
       const plan = solveCubeWithMethod(
@@ -1124,6 +1276,7 @@ export default function App() {
     cubeAudio.playUiTick();
     activeMethodPlanRef.current = null;
     setActiveMethodPlan(null);
+    playTrackerEpochRef.current += 1;
     const empty = createSequenceTracker([]);
     playTrackerRef.current = empty;
     setPlayTracker(empty);
@@ -1150,6 +1303,7 @@ export default function App() {
       }
       activeMethodPlanRef.current = plan;
       setActiveMethodPlan(plan);
+      playTrackerEpochRef.current += 1;
       const tracker = createSequenceTracker(plan.allMoves.map((m) => m.notation));
       playTrackerRef.current = tracker;
       setPlayTracker(tracker);
@@ -1224,6 +1378,23 @@ export default function App() {
 
     let plan = activeMethodPlanRef.current;
     let tracker = playTrackerRef.current;
+
+    if (
+      !plan &&
+      tracker.tokens.length > 0 &&
+      tracker.lastWrongNotation === null &&
+      tracker.currentIndex < tracker.tokens.length &&
+      playTrackerLabelRef.current !== 'Sequence' &&
+      playTrackerLabelRef.current !== 'Scramble'
+    ) {
+      const nextToken = tracker.tokens[tracker.currentIndex];
+      const nextMove = parseNotation(nextToken, puzzleRef.current);
+      if (nextMove) {
+        isSteppingMethodRef.current = true;
+        engine.enqueueMove(nextMove, true, 1.0);
+        return;
+      }
+    }
 
     if (
       !plan ||
@@ -1589,7 +1760,7 @@ export default function App() {
 
   return (
     <main
-      className="relative w-full h-dvh overflow-hidden flex flex-col"
+      className="relative w-full h-dvh overflow-clip flex flex-col"
       style={{ backgroundColor: theme.ui.bg }}
     >
       {/* Docked Non-Overlapping Top Studio Header */}
@@ -1690,7 +1861,7 @@ export default function App() {
               isBusy={isBusy}
               isAutoSolving={isAutoSolving}
               isSolved={isSolved}
-              canUndo={historyRef.current.length > 0}
+              canUndo={undoDepth > 0}
               hintMove={hintMove}
               activeMethodPlan={activeMethodPlan}
               activeLessonId={activeLessonId}
@@ -1725,7 +1896,7 @@ export default function App() {
             isBusy={isBusy}
             isAutoSolving={isAutoSolving}
             isSolved={isSolved}
-            canUndo={historyRef.current.length > 0}
+            canUndo={undoDepth > 0}
             hintMove={hintMove}
             explodeAmount={explodeAmount}
             turnSpeed={turnSpeed}

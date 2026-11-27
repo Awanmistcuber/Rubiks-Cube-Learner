@@ -144,9 +144,15 @@ export const CompactNotationBar: React.FC<CompactNotationBarProps> = ({
     const container = ribbonRef.current;
     if (!container) return;
     const activeChip = container.querySelector<HTMLElement>('[data-step-active="true"]');
-    if (activeChip) {
-      activeChip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    }
+    if (!activeChip) return;
+    const containerRect = container.getBoundingClientRect();
+    const chipRect = activeChip.getBoundingClientRect();
+    const chipLeftInScroll = chipRect.left - containerRect.left + container.scrollLeft;
+    const targetLeft = Math.max(
+      0,
+      chipLeftInScroll - (container.clientWidth - chipRect.width) / 2
+    );
+    container.scrollTo({ left: targetLeft, behavior: 'smooth' });
   }, [tracker.currentIndex, activeTab, tracker.tokens.length]);
 
   const isDark = theme.isDark;

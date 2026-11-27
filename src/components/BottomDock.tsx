@@ -217,14 +217,21 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   const supportsMultiMethod = puzzleType === '3x3' || puzzleType === 'mirror';
   const methodProgress = getActiveMethodProgress(activeMethodPlan, playTracker.currentIndex);
 
-  // Smoothly keep the active move box visible inside long solve ribbons
+  // Smoothly keep the active move box visible strictly inside the notation ribbon
+  // (never use scrollIntoView, which can scroll ancestor panels or the page horizontally on mobile)
   useEffect(() => {
     const container = activeTab === 'play' ? playRibbonRef.current : learnRibbonRef.current;
     if (!container) return;
     const activeChip = container.querySelector<HTMLElement>('[data-step-active="true"]');
-    if (activeChip) {
-      activeChip.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-    }
+    if (!activeChip) return;
+    const containerRect = container.getBoundingClientRect();
+    const chipRect = activeChip.getBoundingClientRect();
+    const chipLeftInScroll = chipRect.left - containerRect.left + container.scrollLeft;
+    const targetLeft = Math.max(
+      0,
+      chipLeftInScroll - (container.clientWidth - chipRect.width) / 2
+    );
+    container.scrollTo({ left: targetLeft, behavior: 'smooth' });
   }, [activeTab, playTracker.currentIndex, lessonTracker.currentIndex]);
 
   const isDark = theme.isDark;
@@ -427,142 +434,130 @@ export const BottomDock: React.FC<BottomDockProps> = ({
       </div>
 
       {/* Independent Scrollable Panel Content */}
-      <div className="flex-1 min-h-0 overflow-y-auto kubi-scroll p-2.5 sm:p-3.5 kubi-safe-bottom">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden kubi-scroll p-2.5 sm:p-3.5 kubi-safe-bottom">
         {/* 1. PLAY & SOLVE TAB */}
         {activeTab === 'play' && (
           <div className="flex flex-col gap-3">
-            {/* Primary Solving Action Row — Clean responsive layout for side panel & mobile drawer */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                disabled={isBusy}
-                onClick={onScramble}
-                className="h-9 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-transform duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                style={{
-                  backgroundColor: theme.ui.accent,
-                  color: theme.ui.accentFg,
-                }}
-              >
-                <Shuffle className="w-3.5 h-3.5 shrink-0" />
-                <span>{t('dock.scramble')}</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={isBusy || isSolved}
-                onClick={onHint}
-                aria-label="Step Hint"
-                title="Show 3D guide arrow for next move"
-                className="h-9 px-2.5 rounded-xl text-xs font-medium border flex items-center justify-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
-                style={{
-                  backgroundColor: theme.ui.surfaceSubtle,
-                  borderColor: theme.ui.border,
-                  color: theme.ui.text,
-                }}
-              >
-                <Compass className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
-                <span>{t('dock.hint')}</span>
-              </button>
-
-              <button
-                type="button"
-                data-testid="dock-open-smart-hint-btn"
-                onClick={onOpenSmartHint}
-                aria-label="Scan physical cube with camera for Smart Hint"
-                title="Scan physical 3×3 cube via camera (Kociemba + basic hints)"
-                className="h-9 px-2.5 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1 transition-colors duration-150 cursor-pointer whitespace-nowrap"
-                style={{
-                  backgroundColor: theme.ui.accentSoft,
-                  borderColor: theme.ui.accent,
-                  color: theme.ui.accent,
-                }}
-              >
-                <ScanLine className="w-3.5 h-3.5 shrink-0" />
-                <span>{t('dock.scanCube')}</span>
-              </button>
-
-              <button
-                type="button"
-                data-testid="play-step-move-btn"
-                disabled={isBusy || isSolved}
-                onClick={onStepSolveMove}
-                aria-label="Step next move"
-                title="Execute one move of the selected solving method"
-                className="h-9 px-2.5 rounded-xl text-xs font-medium border flex items-center justify-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
-                style={{
-                  backgroundColor: theme.ui.surfaceSubtle,
-                  borderColor: theme.ui.border,
-                  color: theme.ui.text,
-                }}
-              >
-                <StepForward className="w-3.5 h-3.5 shrink-0" />
-                <span>Step</span>
-              </button>
-
-              {isAutoSolving ? (
+            {/* Primary Solving Action Rows — 4 primary actions on 1 single row across phone, tablet & laptop */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5 w-full min-w-0">
                 <button
                   type="button"
-                  data-testid="play-pause-solve-btn"
-                  onClick={onPauseAutoSolve}
-                  className="h-9 px-2.5 rounded-xl text-xs font-semibold border flex items-center gap-1 transition-colors duration-150 cursor-pointer whitespace-nowrap"
+                  disabled={isBusy}
+                  onClick={onScramble}
+                  className="h-9 flex-auto min-w-0 px-1.5 sm:px-2.5 rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-transform duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                  style={{
+                    backgroundColor: theme.ui.accent,
+                    color: theme.ui.accentFg,
+                  }}
+                >
+                  <Shuffle className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{t('dock.scramble')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isBusy || isSolved}
+                  onClick={onHint}
+                  aria-label="Step Hint"
+                  title="Show 3D guide arrow for next move"
+                  className="h-9 flex-auto min-w-0 px-1.5 sm:px-2.5 rounded-xl text-[11px] sm:text-xs font-medium border flex items-center justify-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                  style={{
+                    backgroundColor: theme.ui.surfaceSubtle,
+                    borderColor: theme.ui.border,
+                    color: theme.ui.text,
+                  }}
+                >
+                  <Compass className="w-3.5 h-3.5 shrink-0" style={{ color: theme.ui.accent }} />
+                  <span className="truncate">{t('dock.hint')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="dock-open-smart-hint-btn"
+                  onClick={onOpenSmartHint}
+                  aria-label="Scan physical cube with camera for Smart Hint"
+                  title="Scan physical 3×3 cube via camera (Kociemba + basic hints)"
+                  className="h-9 flex-auto min-w-0 px-1.5 sm:px-2.5 rounded-xl text-[11px] sm:text-xs font-semibold border flex items-center justify-center gap-1 transition-colors duration-150 cursor-pointer whitespace-nowrap"
                   style={{
                     backgroundColor: theme.ui.accentSoft,
                     borderColor: theme.ui.accent,
                     color: theme.ui.accent,
                   }}
                 >
-                  <Pause className="w-3.5 h-3.5 shrink-0" />
-                  <span>{t('dock.pause')}</span>
+                  <ScanLine className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{t('dock.scanCube')}</span>
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  data-testid="play-auto-solve-btn"
-                  disabled={isBusy || isSolved}
-                  onClick={onAutoSolve}
-                  className="h-9 px-2.5 rounded-xl text-xs font-medium border flex items-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
-                  style={{
-                    backgroundColor: theme.ui.surfaceSubtle,
-                    borderColor: theme.ui.border,
-                    color: theme.ui.text,
-                  }}
-                >
-                  <Wand2 className="w-3.5 h-3.5 shrink-0" />
-                  <span>{t('dock.autoSolve')}</span>
-                </button>
-              )}
 
-              <div className="flex items-center gap-1 ml-auto">
+                {isAutoSolving ? (
+                  <button
+                    type="button"
+                    data-testid="play-pause-solve-btn"
+                    onClick={onPauseAutoSolve}
+                    className="h-9 flex-auto min-w-0 px-1.5 sm:px-2.5 rounded-xl text-[11px] sm:text-xs font-semibold border flex items-center justify-center gap-1 transition-colors duration-150 cursor-pointer whitespace-nowrap"
+                    style={{
+                      backgroundColor: theme.ui.accentSoft,
+                      borderColor: theme.ui.accent,
+                      color: theme.ui.accent,
+                    }}
+                  >
+                    <Pause className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{t('dock.pause')}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="play-auto-solve-btn"
+                    disabled={isBusy || isSolved}
+                    onClick={onAutoSolve}
+                    className="h-9 flex-auto min-w-0 px-1.5 sm:px-2.5 rounded-xl text-[11px] sm:text-xs font-medium border flex items-center justify-center gap-1 transition-colors duration-150 disabled:opacity-45 cursor-pointer whitespace-nowrap"
+                    style={{
+                      backgroundColor: theme.ui.surfaceSubtle,
+                      borderColor: theme.ui.border,
+                      color: theme.ui.text,
+                    }}
+                  >
+                    <Wand2 className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{t('dock.autoSolve')}</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-1.5 w-full">
                 <button
                   type="button"
+                  data-testid="play-undo-btn"
                   disabled={isBusy || !canUndo}
                   onClick={onUndo}
                   aria-label="Undo last move"
                   title="Undo (Ctrl+Z)"
-                  className="h-9 w-9 rounded-xl border flex items-center justify-center disabled:opacity-40 cursor-pointer shrink-0"
+                  className="h-8 px-2.5 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   style={{
                     backgroundColor: theme.ui.surfaceSubtle,
                     borderColor: theme.ui.border,
                     color: theme.ui.text,
                   }}
                 >
-                  <Undo2 className="w-3.5 h-3.5" />
+                  <Undo2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t('dock.undo')}</span>
                 </button>
 
                 <button
                   type="button"
+                  data-testid="play-reset-btn"
                   disabled={isBusy && !isAutoSolving}
                   onClick={onResetCube}
                   aria-label="Reset cube to solved state"
                   title="Reset cube"
-                  className="h-9 w-9 rounded-xl border flex items-center justify-center disabled:opacity-40 cursor-pointer shrink-0"
+                  className="h-8 px-2.5 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
                   style={{
                     backgroundColor: theme.ui.surfaceSubtle,
                     borderColor: theme.ui.border,
                     color: theme.ui.muted,
                   }}
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
+                  <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t('dock.reset')}</span>
                 </button>
               </div>
             </div>
@@ -572,15 +567,15 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   className="flex flex-col gap-1.5 pt-2 border-t"
                   style={{ borderColor: theme.ui.border }}
                 >
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center justify-between gap-1.5 min-w-0">
                     <div
-                      className="flex items-center gap-1 overflow-x-auto kubi-scroll-x"
+                      className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto kubi-scroll-x"
                       role="group"
                       aria-label="Solving method"
                       data-testid="solve-method-selector"
                     >
                       <span
-                        className="text-[11px] font-medium mr-0.5 shrink-0 hidden sm:inline"
+                        className="text-[11px] font-medium mr-0.5 shrink-0 hidden xl:inline"
                         style={{ color: theme.ui.muted }}
                       >
                         Method
@@ -597,7 +592,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                               aria-pressed={active}
                               onClick={() => onSelectMethod(m.id)}
                               title={m.tagline}
-                              className="h-7 px-2.5 rounded-lg border text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                              className="h-7 px-2 rounded-lg border text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
                               style={{
                                 backgroundColor: active ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
                                 borderColor: active ? theme.ui.accent : theme.ui.border,
@@ -610,7 +605,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         })
                       ) : (
                         <span
-                          className="text-[11px] font-medium px-2 py-1 rounded-lg border"
+                          className="text-[11px] font-medium px-2 py-1 rounded-lg border whitespace-nowrap"
                           style={{
                             backgroundColor: theme.ui.surfaceSubtle,
                             borderColor: theme.ui.border,
@@ -622,35 +617,36 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {!isSolved && activeMethodPlan && (
+                    {!isSolved && activeMethodPlan && (
+                      <div className="flex items-center shrink-0">
                         <button
                           type="button"
                           data-testid="replan-method-btn"
                           disabled={isBusy}
                           onClick={onReplanMethod}
                           title="Recalculate solve plan from current cube state"
-                          className="h-7 px-2 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1 cursor-pointer disabled:opacity-45"
+                          className="h-7 px-2 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1 cursor-pointer disabled:opacity-45 whitespace-nowrap shrink-0"
                           style={{
                             backgroundColor: theme.ui.surfaceSubtle,
                             borderColor: theme.ui.border,
                             color: theme.ui.muted,
                           }}
                         >
-                          <RefreshCw className="w-3 h-3" />
+                          <RefreshCw className="w-3 h-3 shrink-0" />
                           <span>Re-plan</span>
                         </button>
-                      )}
-                      {isSolved && supportsMultiMethod && (
-                        <span
-                          className="text-[11px] truncate max-w-[240px] sm:max-w-none"
-                          style={{ color: theme.ui.muted }}
-                        >
-                          {SOLVE_METHODS[selectedMethod].stageSummary}
-                        </span>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
+
+                  {isSolved && supportsMultiMethod && (
+                    <span
+                      className="text-[11px] truncate"
+                      style={{ color: theme.ui.muted }}
+                    >
+                      {SOLVE_METHODS[selectedMethod].stageSummary}
+                    </span>
+                  )}
 
                   {/* Live Method Flow Stepper — shows exact stage & sub-algorithm progress */}
                   {activeMethodPlan && activeMethodPlan.phases.length > 0 && (
@@ -835,17 +831,19 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                       <div className="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
-                          onClick={onResetPlayTracker}
-                          aria-label="Restart tracked sequence"
-                          title="Restart sequence progress"
-                          className="h-8 w-8 rounded-lg border flex items-center justify-center cursor-pointer"
+                          data-testid="play-sequence-undo-btn"
+                          disabled={isBusy || !canUndo}
+                          onClick={onUndo}
+                          aria-label="Undo last move"
+                          title="Undo last move (Ctrl+Z)"
+                          className="h-8 w-8 rounded-lg border flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                           style={{
                             backgroundColor: theme.ui.surfaceSubtle,
                             borderColor: theme.ui.border,
-                            color: theme.ui.muted,
+                            color: canUndo ? theme.ui.text : theme.ui.muted,
                           }}
                         >
-                          <RotateCcw className="w-3.5 h-3.5" />
+                          <Undo2 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           type="button"
@@ -925,7 +923,40 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                         )}
                       </div>
 
-                      {renderNotationRibbon(playTracker, 'play-seq', 'play-sequence-ribbon', playRibbonRef)}
+                      <div className="flex items-center gap-2 min-w-0">
+                        {!isSolved &&
+                          (activeMethodPlan !== null ||
+                            (playTrackerLabel !== 'Sequence' && playTrackerLabel !== 'Scramble')) && (
+                            <button
+                              type="button"
+                              data-testid="play-step-move-btn"
+                              disabled={isBusy || isSolved}
+                              onClick={onStepSolveMove}
+                              aria-label="Step next move"
+                              title="Execute one move of the solving sequence"
+                              className="h-8 px-2.5 rounded-lg text-xs font-semibold border flex items-center justify-center gap-1 transition-colors duration-150 active:scale-[0.97] disabled:opacity-45 cursor-pointer whitespace-nowrap shrink-0"
+                              style={{
+                                backgroundColor: theme.ui.surfaceSubtle,
+                                borderColor: theme.ui.border,
+                                color: theme.ui.text,
+                              }}
+                            >
+                              <StepForward
+                                className="w-3.5 h-3.5 shrink-0"
+                                style={{ color: theme.ui.accent }}
+                              />
+                              <span>Step</span>
+                            </button>
+                          )}
+                        <div className="flex-1 min-w-0">
+                          {renderNotationRibbon(
+                            playTracker,
+                            'play-seq',
+                            'play-sequence-ribbon',
+                            playRibbonRef
+                          )}
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>

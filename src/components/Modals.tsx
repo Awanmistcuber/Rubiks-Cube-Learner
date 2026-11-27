@@ -4,6 +4,7 @@ import {
   Award,
   BookOpen,
   Camera,
+  ChevronDown,
   CloudRain,
   Download,
   Globe,
@@ -124,24 +125,31 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             <Globe className="w-3.5 h-3.5" style={{ color: theme.ui.accent }} />
             <span>{t('settings.language')}</span>
           </label>
-          <select
-            id="settings-language-select"
-            data-testid="settings-language-select"
-            value={locale}
-            onChange={(e) => setLocale(e.target.value as SupportedLocale)}
-            className="w-full h-10 px-3 rounded-xl border text-xs font-semibold outline-none cursor-pointer"
-            style={{
-              backgroundColor: theme.ui.surfaceSubtle,
-              borderColor: theme.ui.border,
-              color: theme.ui.text,
-            }}
-          >
-            {SUPPORTED_LOCALES.map((loc) => (
-              <option key={loc.code} value={loc.code}>
-                {loc.nativeName} ({loc.englishName})
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              id="settings-language-select"
+              data-testid="settings-language-select"
+              value={locale}
+              onChange={(e) => setLocale(e.target.value as SupportedLocale)}
+              className="w-full h-10 pl-3 pr-9 rounded-xl border text-xs font-semibold outline-none cursor-pointer appearance-none"
+              style={{
+                backgroundColor: theme.ui.surfaceSubtle,
+                borderColor: theme.ui.border,
+                color: theme.ui.text,
+              }}
+            >
+              {SUPPORTED_LOCALES.map((loc) => (
+                <option key={loc.code} value={loc.code}>
+                  {loc.nativeName} ({loc.englishName})
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              className="w-4 h-4 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"
+              style={{ color: theme.ui.muted }}
+              aria-hidden="true"
+            />
+          </div>
         </div>
 
         {/* Quick Theme Switcher (Built-in + Custom Figma Palettes) */}

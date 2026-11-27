@@ -93,7 +93,7 @@ export const TopHud: React.FC<TopHudProps> = ({
       }}
     >
       {/* Row 1 (Mobile) / Left Cluster (sm+): Puzzle Selector + Tabular Stats */}
-      <div className="flex items-center justify-between sm:justify-start gap-1.5 sm:gap-2 min-w-0 shrink-0">
+      <div className="flex items-center justify-between sm:justify-start gap-1 sm:gap-2 min-w-0 w-full sm:w-auto overflow-hidden">
         {/* Puzzle Type Switcher */}
         <div
           className="flex items-center gap-0.5 p-0.5 rounded-xl border shrink-0"
@@ -176,7 +176,7 @@ export const TopHud: React.FC<TopHudProps> = ({
         </div>
 
         {/* Mobile Compact Right Utility Icons (Row 1) */}
-        <div className="flex sm:hidden items-center gap-1 shrink-0">
+        <div className="flex sm:hidden items-center gap-1 min-w-0 overflow-x-auto kubi-scroll-x">
           <button
             type="button"
             tabIndex={-1}
@@ -187,14 +187,14 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label="Open Smart Hint Physical Cube Scanner"
             title="Smart Hint Camera Scanner"
-            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 rounded-lg border flex items-center justify-center cursor-pointer shrink-0"
             style={{
               backgroundColor: theme.ui.accentSoft,
               borderColor: theme.ui.accent,
               color: theme.ui.accent,
             }}
           >
-            <ScanLine className="w-4 h-4" />
+            <ScanLine className="w-3.5 h-3.5" />
           </button>
 
           <button
@@ -206,14 +206,14 @@ export const TopHud: React.FC<TopHudProps> = ({
               onOpenArena();
             }}
             aria-label="Open 1v1 Live Speedcubing Arena"
-            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 rounded-lg border flex items-center justify-center cursor-pointer shrink-0"
             style={{
               backgroundColor: theme.ui.accent,
               borderColor: theme.ui.accent,
               color: theme.ui.accentFg,
             }}
           >
-            <Swords className="w-4 h-4" />
+            <Swords className="w-3.5 h-3.5" />
           </button>
 
           <button
@@ -224,14 +224,14 @@ export const TopHud: React.FC<TopHudProps> = ({
               onOpenStopwatch();
             }}
             aria-label="Open Speedcube Stopwatch"
-            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 rounded-lg border flex items-center justify-center cursor-pointer shrink-0"
             style={{
               backgroundColor: theme.ui.accentSoft,
               borderColor: theme.ui.border,
               color: theme.ui.accent,
             }}
           >
-            <Timer className="w-4 h-4" />
+            <Timer className="w-3.5 h-3.5" />
           </button>
 
           <button
@@ -242,14 +242,14 @@ export const TopHud: React.FC<TopHudProps> = ({
               onOpenDashboard();
             }}
             aria-label="Open Timing Dashboard and Graphs"
-            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 rounded-lg border flex items-center justify-center cursor-pointer shrink-0"
             style={{
               backgroundColor: theme.ui.surfaceSubtle,
               borderColor: theme.ui.border,
               color: theme.ui.text,
             }}
           >
-            <BarChart3 className="w-4 h-4" />
+            <BarChart3 className="w-3.5 h-3.5" />
           </button>
 
           <button
@@ -260,14 +260,14 @@ export const TopHud: React.FC<TopHudProps> = ({
               onToggleMute();
             }}
             aria-label={isMuted ? 'Unmute audio' : 'Mute audio'}
-            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 rounded-lg border flex items-center justify-center cursor-pointer shrink-0"
             style={{
               backgroundColor: theme.ui.surfaceSubtle,
               borderColor: theme.ui.border,
               color: isMuted ? theme.ui.muted : theme.ui.text,
             }}
           >
-            {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
           </button>
 
           <button
@@ -279,14 +279,14 @@ export const TopHud: React.FC<TopHudProps> = ({
             }}
             aria-label={shortcutsOpen ? 'Hide keyboard shortcuts' : 'Show keyboard shortcuts'}
             aria-pressed={shortcutsOpen}
-            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            className="hidden min-[430px]:flex w-7 h-7 rounded-lg border items-center justify-center cursor-pointer shrink-0"
             style={{
               backgroundColor: shortcutsOpen ? theme.ui.accentSoft : theme.ui.surfaceSubtle,
               borderColor: shortcutsOpen ? theme.ui.accent : theme.ui.border,
               color: shortcutsOpen ? theme.ui.accent : theme.ui.text,
             }}
           >
-            <Keyboard className="w-4 h-4" />
+            <Keyboard className="w-3.5 h-3.5" />
           </button>
 
           <button
@@ -297,14 +297,14 @@ export const TopHud: React.FC<TopHudProps> = ({
               onPause();
             }}
             aria-label="Pause studio"
-            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer"
+            className="w-7 h-7 rounded-lg border flex items-center justify-center cursor-pointer shrink-0"
             style={{
               backgroundColor: theme.ui.surfaceSubtle,
               borderColor: theme.ui.border,
               color: theme.ui.text,
             }}
           >
-            <Pause className="w-4 h-4" />
+            <Pause className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

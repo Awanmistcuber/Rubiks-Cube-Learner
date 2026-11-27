@@ -200,6 +200,49 @@ export function clearSequenceWrongState(state: SequenceTrackerState): SequenceTr
 }
 
 /**
+ * Steps backward by one completed move when undoing a stepped or matched move,
+ * preserving the entire notation sequence and restoring the previous step to pending/active.
+ */
+export function stepBackSequence(
+  state: SequenceTrackerState,
+  prevHalfTurnDirection: 1 | -1 | null = null
+): SequenceTrackerState {
+  if (state.tokens.length === 0) return state;
+  const prevIdx = Math.max(0, state.currentIndex - 1);
+  const nextStatuses = [...state.statuses];
+  if (prevIdx < nextStatuses.length) {
+    nextStatuses[prevIdx] = 'pending';
+  }
+  return {
+    ...state,
+    currentIndex: prevIdx,
+    statuses: nextStatuses,
+    halfTurnDirection: prevHalfTurnDirection,
+    lastWrongNotation: null,
+    expectedOnWrong: null,
+  };
+}
+
+/**
+ * Restores a step's half-turn progress cleanly when undoing a single 90-degree half of a 180-degree move.
+ */
+export function restoreSequenceHalfTurn(
+  state: SequenceTrackerState,
+  halfTurnDirection: 1 | -1 | null
+): SequenceTrackerState {
+  if (state.currentIndex >= state.tokens.length) return state;
+  const nextStatuses = [...state.statuses];
+  nextStatuses[state.currentIndex] = 'pending';
+  return {
+    ...state,
+    statuses: nextStatuses,
+    halfTurnDirection,
+    lastWrongNotation: null,
+    expectedOnWrong: null,
+  };
+}
+
+/**
  * Advances one step programmatically (used by the Learn tab Step button).
  */
 export function advanceSequenceStep(state: SequenceTrackerState): SequenceTrackerState {
